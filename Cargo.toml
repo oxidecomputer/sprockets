@@ -1,0 +1,16 @@
+[package]
+name = "sprockets"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+corncobs = { tag = "v0.1.1", git = "https://github.com/cbiffle/corncobs" }
+hubpack = { rev = "da22d33ffd754fa837ed16da19194fd0bb63c4e9", git = "https://github.com/cbiffle/hubpack"}
+tinyvec = { version = "1.5.1" }
+derive_more = "0.99.17"
+serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
+serde-big-array = { version = "0.3.2" }
+ed25519-dalek = { version = "1.0.1", default-features = false, features = ["u64_backend"]}
+salty = { version = "0.2.0" }
