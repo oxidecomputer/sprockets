@@ -1,5 +1,11 @@
 //! Implementation of the RoT sprocket
 
+use crate::endorsements::Ed25519EndorsementsV1;
+use crate::keys::{Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+use crate::measurements::{
+    HbsMeasurementsV1, HostMeasurementsV1, MeasurementCorpusV1, MeasurementsV1, RotMeasurementsV1,
+    SpMeasurementsV1,
+};
 use crate::msgs::*;
 
 use hubpack::{deserialize, serialize};
