@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod msgs;
+pub mod rot;
 
 #[cfg(test)]
 mod tests {

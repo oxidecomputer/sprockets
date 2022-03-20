@@ -22,13 +22,13 @@ pub struct Sha256Digest([u8; 32]);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct RotRequest {
     /// A monotonic counter used to differentiate requests
-    id: u32,
+    pub id: u32,
 
     // The version of this request format
-    version: u32,
+    pub version: u32,
 
     // The operation requested of the RoT
-    op: RotOpV1,
+    pub op: RotOpV1,
 }
 
 /// Requested operations of the RoT by the SP.
@@ -38,27 +38,38 @@ pub struct RotRequest {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub enum RotOpV1 {
     GetEndorsements,
-    AddHostMeasurements,
-    GetMeasurements,
+    //  AddHostMeasurements,
+    //  GetMeasurements,
+    // TODO: DHE related ops
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct RotResponse {
     /// A monotonic counter used to differentiate requests
-    id: u32,
+    pub id: u32,
 
     // The version of this request format
-    version: u32,
+    pub version: u32,
 
     // The result of a requested operation from the RoT
-    op: RotResultV1,
+    pub result: RotResultV1,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub enum RotResultV1 {
-    Endorsements(Result<Ed25519EndorsementsV1, GetEndorsementsError>),
-    AddHostMeasurementsReply(Result<(), AddHostMeasurementsError>),
-    Measurements(Result<MeasurementsV1, GetMeasurementsError>),
+    Ok,
+    Err(RotErrorV1),
+    Endorsements(Ed25519EndorsementsV1),
+    Measurements(MeasurementsV1),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+pub enum RotErrorV1 {
+    UnsupportedVersion,
+    InvalidOperation,
+    GetEndorsements(GetEndorsementsError),
+    AddHostMeasurements(AddHostMeasurementsError),
+    GetMeasurements(GetMeasurementsError),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
