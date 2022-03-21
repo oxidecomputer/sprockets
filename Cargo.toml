@@ -12,5 +12,13 @@ tinyvec = { version = "1.5.1" }
 derive_more = "0.99.17"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
 serde-big-array = { version = "0.3.2" }
-ed25519-dalek = { version = "1.0.1", default-features = false, features = ["u64_backend"]}
-salty = { version = "0.2.0" }
+ed25519 = { version = "1.4.1", default-features = false}
+ed25519-dalek = { version = "1.0.1", default-features = false, features = ["u64_backend"], optional = true}
+salty = { version = "0.2.0", optional = true }
+rand = { version = "0.8.5" }
+
+[features]
+# Tests run with it all on the host
+default = ["rot", "sled-agent"]
+rot = ["salty"]
+sled-agent = ["ed25519-dalek"]

@@ -1,7 +1,7 @@
 //! Implementation of the RoT sprocket
 
 use crate::endorsements::Ed25519EndorsementsV1;
-use crate::keys::{Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+use crate::keys::{random_buf, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 use crate::measurements::{
     HbsMeasurementsV1, HostMeasurementsV1, MeasurementCorpusV1, MeasurementsV1, RotMeasurementsV1,
     SpMeasurementsV1,
@@ -9,6 +9,7 @@ use crate::measurements::{
 use crate::msgs::*;
 
 use hubpack::{deserialize, serialize};
+use salty;
 
 /// A key management and measurement service run on the RoT
 pub struct RotSprocket {
@@ -16,9 +17,9 @@ pub struct RotSprocket {
     /// of trust of this platform.
     manufacturing_public_key: Ed25519PublicKey,
 
-    device_secret_key: Ed25519SecretKey,
-    measurements_secret_key: Ed25519SecretKey,
-    dhe_secret_key: Ed25519SecretKey,
+    device_id_keypair: salty::Keypair,
+    measurement_keypair: salty::Keypair,
+    dhe_keypair: salty::Keypair,
 
     endorsements: Ed25519EndorsementsV1,
 
@@ -32,10 +33,34 @@ pub struct RotSprocket {
     corpus: MeasurementCorpusV1,
 }
 
-pub struct RotPublicConfig {
+impl RotSprocket {
+    /*    pub fn new(RotConfig) -> RotSprocket {
+
+    }
+    */
+
+    // TODO: remove this altogether eventually
+    // Use salty to create the keys and do signing. This allows us to run
+    // the code on the RoT and Host.
+    /*    pub fn bootstrap_for_testing() -> RotSprocket {
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let device_id_keypair = salty::Keypair::from(&random_buf());
+        let measurement_keypair = salty::Keypair::from(&random_buf());
+        let dhe_keypair = salty::Keypair::from(&random_buf());
+    }
+    */
+}
+
+pub struct RotConfig {
     pub manufacturing_public_key: Ed25519PublicKey,
     pub endorsements: Ed25519EndorsementsV1,
     pub corpus: MeasurementCorpusV1,
+
+    // TODO: Should we instead use the generic array forms and convert to salty
+    // as needed?
+    pub device_keypair: salty::Keypair,
+    pub measurement_keypair: salty::Keypair,
+    pub dhe_keypair: salty::Keypair,
 }
 
 pub struct RotSecretConfig {
