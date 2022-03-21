@@ -211,7 +211,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validation() {
+    fn test_endorsement_validation() {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
         let device_id_keypair = salty::Keypair::from(&random_buf());
         let measurement_keypair = salty::Keypair::from(&random_buf());
@@ -224,8 +224,29 @@ mod tests {
         );
 
         let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
-        let x = endorsements.validate(&manufacturing_public_key);
-        println!("{:?}", x);
         assert!(endorsements.validate(&manufacturing_public_key).is_ok());
+    }
+
+    #[test]
+    fn test_endorsement_failure() {
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let device_id_keypair = salty::Keypair::from(&random_buf());
+        let measurement_keypair = salty::Keypair::from(&random_buf());
+        let dhe_keypair = salty::Keypair::from(&random_buf());
+        let mut endorsements = Ed25519EndorsementsV1::bootstrap_for_testing(
+            &manufacturing_keypair,
+            &device_id_keypair,
+            &measurement_keypair,
+            &dhe_keypair,
+        );
+
+        // Modify DHE signature so validation fails
+        endorsements.dhe.signature.0[0] += 1;
+
+        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+        assert_eq!(
+            Err(Ed25519EndorsementsErrorV1::InvalidDheSig),
+            endorsements.validate(&manufacturing_public_key)
+        );
     }
 }
