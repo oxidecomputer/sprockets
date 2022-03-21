@@ -31,6 +31,22 @@ pub struct Sha256Digest(pub [u8; 32]);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Nonce(pub [u8; 32]);
 
+impl Nonce {
+    pub const SIZE: usize = 32;
+
+    pub fn new() -> Nonce {
+        Nonce(random_buf())
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
 // Return 32-bytes of randomness for use in a Nonce or Secret Key
 pub fn random_buf() -> [u8; 32] {
     let mut data = [0u8; 32];

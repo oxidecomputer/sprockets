@@ -1,7 +1,9 @@
 //! Implementation of the RoT sprocket
 
 use crate::endorsements::Ed25519EndorsementsV1;
-use crate::keys::{random_buf, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+use crate::keys::{
+    random_buf, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, Nonce, Sha256Digest,
+};
 use crate::measurements::{
     HbsMeasurementsV1, HostMeasurementsV1, MeasurementCorpusV1, MeasurementsV1, RotMeasurementsV1,
     SpMeasurementsV1,
@@ -25,10 +27,7 @@ pub struct RotSprocket {
     endorsements: Ed25519EndorsementsV1,
 
     /// Measurements get filled in by the running service
-    rot_measurements: Option<RotMeasurementsV1>,
-    sp_measurements: Option<SpMeasurementsV1>,
-    hbs_measurements: Option<HbsMeasurementsV1>,
-    host_measurements: Option<HostMeasurementsV1>,
+    measurements: MeasurementsV1,
 
     /// The expected value of measurements (shipped with fw update)
     corpus: MeasurementCorpusV1,
@@ -36,20 +35,31 @@ pub struct RotSprocket {
 
 impl RotSprocket {
     pub fn new(config: RotConfig) -> RotSprocket {
-        RotSprocket {
+        let mut rot = RotSprocket {
             manufacturing_public_key: config.manufacturing_public_key,
             device_id_keypair: config.device_id_keypair,
             measurement_keypair: config.measurement_keypair,
             dhe_keypair: config.dhe_keypair,
             endorsements: config.endorsements,
-
-            rot_measurements: None,
-            sp_measurements: None,
-            hbs_measurements: None,
-            host_measurements: None,
-
+            measurements: MeasurementsV1::default(),
             corpus: config.corpus,
-        }
+        };
+        rot.take_fake_measurements();
+        rot
+    }
+
+    pub fn take_fake_measurements(&mut self) {
+        self.measurements.rot = Some(RotMeasurementsV1 {
+            tcb: Sha256Digest(random_buf()),
+        });
+
+        self.measurements.sp = Some(SpMeasurementsV1 {
+            tcb: Sha256Digest(random_buf()),
+        });
+
+        self.measurements.hbs = Some(HbsMeasurementsV1 {
+            tcb: Sha256Digest(random_buf()),
+        });
     }
 }
 
@@ -111,27 +121,51 @@ impl RotSprocket {
     /// Handle a serialized request
     pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<(), RotSprocketError> {
         let (request, _) = deserialize::<RotRequest>(req)?;
-        let response = self.handle_deserialized(request);
+        let response = self.handle_deserialized(request)?;
         serialize(rsp, &response)?;
         Ok(())
     }
 
     /// Handle a request and return a reply
-    pub fn handle_deserialized(&mut self, request: RotRequest) -> RotResponse {
+    pub fn handle_deserialized(
+        &mut self,
+        request: RotRequest,
+    ) -> Result<RotResponse, RotSprocketError> {
         if request.version != 1 {
-            return RotResponse {
+            return Ok(RotResponse {
                 id: request.id,
                 version: request.version,
                 result: RotResultV1::Err(RotErrorV1::UnsupportedVersion),
-            };
+            });
         }
-        match request.op {
-            RotOpV1::GetEndorsements => RotResponse {
-                id: request.id,
-                version: request.version,
-                result: RotResultV1::Endorsements(self.endorsements.clone()),
-            },
-        }
+        let result = match request.op {
+            RotOpV1::GetEndorsements => RotResultV1::Endorsements(self.endorsements.clone()),
+            RotOpV1::AddHostMeasurements(measurements) => {
+                if self.measurements.host.is_some() {
+                    RotResultV1::Err(RotErrorV1::AddHostMeasurements(
+                        AddHostMeasurementsError::AlreadyAdded,
+                    ))
+                } else {
+                    // TODO: Check corpus for validity
+                    self.measurements.host = Some(measurements);
+                    RotResultV1::Ok
+                }
+            }
+            RotOpV1::GetMeasurements(nonce) => {
+                // We sign the serialized form.
+                let mut buf = [0u8; MeasurementsV1::MAX_SIZE + Nonce::SIZE];
+                let size = serialize(&mut buf, &self.measurements)?;
+                buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+                let sig = self.measurement_keypair.sign(&buf[..size + nonce.len()]);
+                let sig = Ed25519Signature(sig.to_bytes());
+                RotResultV1::Measurements(self.measurements.clone(), nonce.clone(), sig)
+            }
+        };
+        Ok(RotResponse {
+            id: request.id,
+            version: request.version,
+            result,
+        })
     }
 }
 
@@ -159,5 +193,44 @@ mod tests {
             rsp.result,
             RotResultV1::Endorsements(endorsements)
         ));
+    }
+
+    #[test]
+    fn test_measurements() {
+        let config = RotConfig::bootstrap_for_testing();
+        let endorsements = config.endorsements.clone();
+        let mut rot = RotSprocket::new(config);
+        let nonce = Nonce::new();
+
+        // Get measurements before we have added host measurements
+        let req = RotRequest {
+            id: 1,
+            version: 1,
+            op: RotOpV1::GetMeasurements(nonce.clone()),
+        };
+        let mut reqbuf = [0u8; RotRequest::MAX_SIZE];
+        let mut rspbuf = [0u8; RotResponse::MAX_SIZE];
+        let size = serialize(&mut reqbuf, &req).unwrap();
+        rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
+        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
+        if let RotResultV1::Measurements(measurements, nonce_received, sig) = rsp.result {
+            assert_eq!(nonce_received, nonce);
+
+            // Recreate the buffer that was signed
+            let mut signed_buf = [0u8; MeasurementsV1::MAX_SIZE + Nonce::SIZE];
+            let size = serialize(&mut signed_buf, &measurements).unwrap();
+            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+
+            let measurement_pub_key =
+                salty::PublicKey::try_from(&endorsements.measurement.subject_public_key.0).unwrap();
+            assert!(measurement_pub_key
+                .verify(
+                    &signed_buf[..size + nonce.len()],
+                    &salty::Signature::from(&sig.0)
+                )
+                .is_ok());
+        } else {
+            panic!();
+        }
     }
 }

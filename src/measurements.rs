@@ -13,39 +13,39 @@ use crate::keys::Sha256Digest;
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct MeasurementsV1 {
-    serial_number: SerialNumber,
-    rot: RotMeasurementsV1,
-    sp: SpMeasurementsV1,
-    hbs: HbsMeasurementsV1,
-    host: HostMeasurementsV1,
+    pub serial_number: SerialNumber,
+    pub rot: Option<RotMeasurementsV1>,
+    pub sp: Option<SpMeasurementsV1>,
+    pub hbs: Option<HbsMeasurementsV1>,
+    pub host: Option<HostMeasurementsV1>,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct RotMeasurementsV1 {
-    tcb: Sha256Digest,
+    pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct SpMeasurementsV1 {
-    tcb: Sha256Digest,
+    pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HbsMeasurementsV1 {
-    tcb: Sha256Digest,
+    pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HostMeasurementsV1 {
-    tcb: Sha256Digest,
+    pub tcb: Sha256Digest,
 }
 
 #[derive(

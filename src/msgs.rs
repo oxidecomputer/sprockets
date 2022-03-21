@@ -3,7 +3,8 @@ use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
 
 use crate::endorsements::Ed25519EndorsementsV1;
-use crate::measurements::MeasurementsV1;
+use crate::keys::{Ed25519Signature, Nonce};
+use crate::measurements::{HostMeasurementsV1, MeasurementsV1};
 
 /// A request to an RoT from an SP
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
@@ -25,8 +26,8 @@ pub struct RotRequest {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub enum RotOpV1 {
     GetEndorsements,
-    //  AddHostMeasurements,
-    //  GetMeasurements(Nonce),
+    AddHostMeasurements(HostMeasurementsV1),
+    GetMeasurements(Nonce),
     // TODO: DHE related ops
 }
 
@@ -47,7 +48,7 @@ pub enum RotResultV1 {
     Ok,
     Err(RotErrorV1),
     Endorsements(Ed25519EndorsementsV1),
-    Measurements(MeasurementsV1),
+    Measurements(MeasurementsV1, Nonce, Ed25519Signature),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
