@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_get_endorsements() {
         let config = RotConfig::bootstrap_for_testing();
-        let endorsements = config.endorsements.clone();
+        let expected_endorsements = config.endorsements.clone();
         let mut rot = RotSprocket::new(config);
         let req = RotRequest {
             id: 0,
@@ -188,11 +188,11 @@ mod tests {
         serialize(&mut reqbuf, &req).unwrap();
         rot.handle(&reqbuf, &mut rspbuf).unwrap();
         let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
-        println!("{:?}", rsp);
-        assert!(matches!(
-            rsp.result,
-            RotResultV1::Endorsements(endorsements)
-        ));
+        if let RotResultV1::Endorsements(endorsements) = rsp.result {
+            assert_eq!(endorsements, expected_endorsements);
+        } else {
+            panic!();
+        }
     }
 
     #[test]
@@ -229,6 +229,56 @@ mod tests {
                     &salty::Signature::from(&sig.0)
                 )
                 .is_ok());
+
+            assert!(measurements.host.is_none());
+        } else {
+            panic!();
+        }
+
+        // Add host measurements
+
+        let host_measurements = HostMeasurementsV1 {
+            tcb: Sha256Digest(random_buf()),
+        };
+        let req = RotRequest {
+            id: 2,
+            version: 1,
+            op: RotOpV1::AddHostMeasurements(host_measurements),
+        };
+        let size = serialize(&mut reqbuf, &req).unwrap();
+        rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
+        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
+        assert!(matches!(rsp.result, RotResultV1::Ok));
+
+        let nonce = Nonce::new();
+        // Now recheck to ensure the host measurement was added.
+        let req = RotRequest {
+            id: 3,
+            version: 1,
+            op: RotOpV1::GetMeasurements(nonce.clone()),
+        };
+        let size = serialize(&mut reqbuf, &req).unwrap();
+        rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
+        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
+        if let RotResultV1::Measurements(measurements, nonce_received, sig) = rsp.result {
+            assert_eq!(nonce_received, nonce);
+
+            // Recreate the buffer that was signed
+            let mut signed_buf = [0u8; MeasurementsV1::MAX_SIZE + Nonce::SIZE];
+            let size = serialize(&mut signed_buf, &measurements).unwrap();
+            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+
+            let measurement_pub_key =
+                salty::PublicKey::try_from(&endorsements.measurement.subject_public_key.0).unwrap();
+            assert!(measurement_pub_key
+                .verify(
+                    &signed_buf[..size + nonce.len()],
+                    &salty::Signature::from(&sig.0)
+                )
+                .is_ok());
+
+            // Ensure we got back the measurements we sent
+            assert_eq!(measurements.host, Some(host_measurements));
         } else {
             panic!();
         }
