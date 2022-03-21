@@ -6,11 +6,11 @@
 use ed25519_dalek::{PublicKey, SecretKey, Signature, Signer};
 
 use derive_more::From;
-use hubpack::SerializedSize;
 use salty;
 use serde::{Deserialize, Serialize};
 
-use crate::keys::{random_buf, Ed25519PublicKey, Ed25519Signature};
+use crate::keys::{Ed25519PublicKey, Ed25519Signature};
+use hubpack::SerializedSize;
 
 /// The set of all endorsements for a given RoT
 ///
@@ -179,7 +179,9 @@ pub struct Ed25519EndorsementV1 {
 }
 
 /// A unique identifier for a device.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+)]
 pub struct SerialNumber([u8; 16]);
 
 /// The different types of public keys managed by the RoT.
@@ -209,6 +211,7 @@ pub enum KeyType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::random_buf;
 
     #[test]
     fn test_endorsement_validation() {

@@ -23,7 +23,9 @@ pub struct Ed25519SecretKey(pub [u8; 32]);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+)]
 pub struct Sha256Digest(pub [u8; 32]);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
