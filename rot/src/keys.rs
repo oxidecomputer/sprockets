@@ -21,9 +21,6 @@ big_array! { BigArray; }
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Ed25519SecretKey(pub [u8; 32]);
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
@@ -52,6 +49,9 @@ impl Nonce {
 }
 
 // Return 32-bytes of randomness for use in a Nonce or Secret Key
+//
+// TODO: If we are actually using this to generate a secret key it should
+// probably use zeroize
 #[cfg(feature = "rand")]
 pub fn random_buf() -> [u8; 32] {
     let mut data = [0u8; 32];

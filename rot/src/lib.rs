@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), no_std)]
 
-pub mod endorsements;
+pub mod certificates;
 pub mod keys;
 pub mod measurements;
 pub mod msgs;

@@ -6,45 +6,45 @@ use derive_more::From;
 use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
 
-use crate::endorsements::SerialNumber;
+use crate::certificates::SerialNumber;
 use crate::keys::Sha256Digest;
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct MeasurementsV1 {
+pub struct Measurements {
     pub serial_number: SerialNumber,
-    pub rot: Option<RotMeasurementsV1>,
-    pub sp: Option<SpMeasurementsV1>,
-    pub hbs: Option<HbsMeasurementsV1>,
-    pub host: Option<HostMeasurementsV1>,
+    pub rot: Option<RotMeasurements>,
+    pub sp: Option<SpMeasurements>,
+    pub hbs: Option<HbsMeasurements>,
+    pub host: Option<HostMeasurements>,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct RotMeasurementsV1 {
+pub struct RotMeasurements {
     pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct SpMeasurementsV1 {
+pub struct SpMeasurements {
     pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct HbsMeasurementsV1 {
+pub struct HbsMeasurements {
     pub tcb: Sha256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct HostMeasurementsV1 {
+pub struct HostMeasurements {
     pub tcb: Sha256Digest,
 }
 
@@ -52,6 +52,6 @@ pub struct HostMeasurementsV1 {
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 /// All allowable hashes for a given version of sw/hw.
-pub struct MeasurementCorpusV1 {
-    measurements: [MeasurementsV1; 1],
+pub struct MeasurementCorpus {
+    measurements: [Measurements; 1],
 }

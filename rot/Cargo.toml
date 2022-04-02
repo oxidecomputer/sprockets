@@ -19,6 +19,6 @@ rand = { version = "0.8.5", optional = true }
 
 [features]
 # Tests run with it all on the host
-default = ["rot", "sled-agent", "rand"]
+default = ["rot", "host", "rand"]
 rot = ["salty"]
-sled-agent = ["ed25519-dalek"]
+host = ["ed25519-dalek"]

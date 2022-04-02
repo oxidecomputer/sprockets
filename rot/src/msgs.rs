@@ -2,25 +2,20 @@ use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
-use crate::endorsements::Ed25519EndorsementsV1;
+use crate::certificates::Ed25519Certificates;
 use crate::keys::{Ed25519Signature, Nonce};
-use crate::measurements::{HostMeasurementsV1, MeasurementsV1};
+use crate::measurements::{HostMeasurements, Measurements};
 
 /// A request to an RoT from an SP
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub struct RotRequest {
-    /// A monotonic counter used to differentiate requests
-    pub id: u32,
+pub enum RotRequest {
+    V1 {
+        /// A monotonic counter used to differentiate requests
+        id: u32,
 
-    // The version of this request format
-    pub version: u32,
-
-    // The operation requested of the RoT
-    //
-    // TODO: This should almost certainly be an opcode and the RotRequest struct
-    // treated like a header. That allows extensibility without a version for a
-    /// wrapper enum.
-    pub op: RotOpV1,
+        /// The operation requested of the RoT
+        op: RotOp,
+    },
 }
 
 /// Requested operations of the RoT by the SP.
@@ -28,46 +23,44 @@ pub struct RotRequest {
 /// Note that these requests may be proxied for the sled-agent, or MGS, but
 /// that is not relevant to the RoT.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub enum RotOpV1 {
-    GetEndorsements,
-    AddHostMeasurements(HostMeasurementsV1),
+pub enum RotOp {
+    GetCertificates,
+    AddHostMeasurements(HostMeasurements),
     GetMeasurements(Nonce),
-    // TODO: DHE related ops
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub struct RotResponse {
-    /// A monotonic counter used to differentiate requests
-    pub id: u32,
+pub enum RotResponse {
+    V1 {
+        /// A monotonic counter used to differentiate requests
+        id: u32,
 
-    // The version of this request format
-    pub version: u32,
-
-    // The result of a requested operation from the RoT
-    //
-    // TODO: Same as in the RotRequest. Make this an opcode
-    pub result: RotResultV1,
+        // The result of a requested operation from the RoT
+        //
+        // TODO: Same as in the RotRequest. Make this an opcode
+        result: RotResult,
+    },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub enum RotResultV1 {
+pub enum RotResult {
     Ok,
-    Err(RotErrorV1),
-    Endorsements(Ed25519EndorsementsV1),
-    Measurements(MeasurementsV1, Nonce, Ed25519Signature),
+    Err(RotError),
+    Certificates(Ed25519Certificates),
+    Measurements(Measurements, Nonce, Ed25519Signature),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub enum RotErrorV1 {
+pub enum RotError {
     UnsupportedVersion,
     InvalidOperation,
-    GetEndorsements(GetEndorsementsError),
+    GetCertificates(GetCertificatesError),
     AddHostMeasurements(AddHostMeasurementsError),
     GetMeasurements(GetMeasurementsError),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub enum GetEndorsementsError {
+pub enum GetCertificatesError {
     NotFound,
 }
 
