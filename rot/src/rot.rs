@@ -119,11 +119,11 @@ impl From<hubpack::error::Error> for RotSprocketError {
 
 impl RotSprocket {
     /// Handle a serialized request
-    pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<(), RotSprocketError> {
+    pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<usize, RotSprocketError> {
         let (request, _) = deserialize::<RotRequest>(req)?;
         let response = self.handle_deserialized(request)?;
-        serialize(rsp, &response)?;
-        Ok(())
+        let pos = serialize(rsp, &response)?;
+        Ok(pos)
     }
 
     /// Handle a request and return a reply

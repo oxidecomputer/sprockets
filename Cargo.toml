@@ -1,24 +1,15 @@
-[package]
-name = "sprockets"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "rot"
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+default-members = [
+    "rot"
+]
 
-[dependencies]
-corncobs = { tag = "v0.1.1", git = "https://github.com/cbiffle/corncobs" }
-hubpack = { rev = "da22d33ffd754fa837ed16da19194fd0bb63c4e9", git = "https://github.com/cbiffle/hubpack"}
-tinyvec = { version = "1.5.1" }
-derive_more = "0.99.17"
-serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
-serde-big-array = { version = "0.3.2" }
-ed25519 = { version = "1.4.1", default-features = false}
-ed25519-dalek = { version = "1.0.1", default-features = false, features = ["u64_backend"], optional = true}
-salty = { version = "0.2.0", optional = true }
-rand = { version = "0.8.5" }
+[profile.dev]
+panic = "abort"
 
-[features]
-# Tests run with it all on the host
-default = ["rot", "sled-agent"]
-rot = ["salty"]
-sled-agent = ["ed25519-dalek"]
+[profile.release]
+panic = "abort"
+

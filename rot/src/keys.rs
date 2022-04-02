@@ -7,7 +7,11 @@
 
 use derive_more::From;
 use hubpack::SerializedSize;
+
+// This is temporary until I use Phil's code
+#[cfg(feature = "rand")]
 use rand::{rngs::OsRng, RngCore};
+
 use serde::{Deserialize, Serialize};
 use serde_big_array::big_array;
 
@@ -43,13 +47,20 @@ impl Nonce {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        self.0.as_slice()
+        &self.0
     }
 }
 
 // Return 32-bytes of randomness for use in a Nonce or Secret Key
+#[cfg(feature = "rand")]
 pub fn random_buf() -> [u8; 32] {
     let mut data = [0u8; 32];
     OsRng.fill_bytes(&mut data);
     data
+}
+
+// This is temporary until I use Phil's hardware drivers
+#[cfg(not(feature = "rand"))]
+pub fn random_buf() -> [u8; 32] {
+    [0u8; 32]
 }

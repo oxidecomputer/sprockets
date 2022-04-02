@@ -1,5 +1,5 @@
 use derive_more::From;
-use hubpack::SerializedSize;
+pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
 use crate::endorsements::Ed25519EndorsementsV1;
@@ -16,6 +16,10 @@ pub struct RotRequest {
     pub version: u32,
 
     // The operation requested of the RoT
+    //
+    // TODO: This should almost certainly be an opcode and the RotRequest struct
+    // treated like a header. That allows extensibility without a version for a
+    /// wrapper enum.
     pub op: RotOpV1,
 }
 
@@ -40,6 +44,8 @@ pub struct RotResponse {
     pub version: u32,
 
     // The result of a requested operation from the RoT
+    //
+    // TODO: Same as in the RotRequest. Make this an opcode
     pub result: RotResultV1,
 }
 
