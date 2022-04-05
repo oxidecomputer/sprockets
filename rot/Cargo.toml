@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 corncobs = { tag = "v0.1.1", git = "https://github.com/cbiffle/corncobs" }
-hubpack = { rev = "36b13ad37a3b9606ea9f7f4d74f4d93ae83f4004", git = "https://github.com/jgallagher/hubpack.git"}
+hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 tinyvec = { version = "1.5.1" }
 derive_more = "0.99.17"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
