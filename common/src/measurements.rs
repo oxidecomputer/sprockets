@@ -7,7 +7,7 @@ use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
 
 use crate::certificates::SerialNumber;
-use crate::keys::Sha256Digest;
+use crate::Sha256Digest;
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,

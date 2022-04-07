@@ -2,9 +2,9 @@ use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
-use crate::certificates::Ed25519Certificates;
-use crate::keys::{Ed25519Signature, Nonce};
+use crate::certificates::{Ed25519Certificates, Ed25519Signature};
 use crate::measurements::{HostMeasurements, Measurements};
+use crate::Nonce;
 
 /// A request to an RoT from an SP
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sprockets-rot = { path = "../rot" }
+sprockets-common = { path = "../common" }
 ring = "0.16.20"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 derive_more = "0.99.17"

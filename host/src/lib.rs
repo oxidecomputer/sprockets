@@ -2,9 +2,9 @@ use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
-use sprockets_rot::certificates::Ed25519Certificates;
-use sprockets_rot::keys::{Ed25519Signature, Nonce};
-use sprockets_rot::measurements::{HostMeasurements, Measurements};
+use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature};
+use sprockets_common::measurements::{HostMeasurements, Measurements};
+use sprockets_common::Nonce;
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///
