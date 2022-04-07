@@ -1,12 +1,14 @@
 [workspace]
 members = [
     "rot",
-    "host"
+    "host",
+    "common",
 ]
 
 default-members = [
     "rot",
-    "host"
+    "host",
+    "common",
 ]
 
 [profile.dev]
