@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
@@ -52,6 +56,7 @@ pub enum RotResult {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub enum RotError {
+    BadEncoding,
     UnsupportedVersion,
     InvalidOperation,
     GetCertificates(GetCertificatesError),

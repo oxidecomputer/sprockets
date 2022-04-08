@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.use derive_more::From;
 
+#![forbid(unsafe_code)]
+#![cfg_attr(not(test), no_std)]
+
 // This is temporary until I use Phil's code on the RoT
 #[cfg(feature = "rand")]
 use rand::{rngs::OsRng, RngCore};
