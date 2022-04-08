@@ -107,7 +107,7 @@ impl RotConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RotSprocketError {
     InvalidSerializedReq,
     DeserializationBufferTooSmall,

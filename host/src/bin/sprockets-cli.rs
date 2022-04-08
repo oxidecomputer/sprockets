@@ -41,6 +41,8 @@ fn main() -> anyhow::Result<()> {
     let req = RotRequest::V1 { id: 1, op };
     let size = serialize(&mut req_buf, &req).unwrap();
 
+    println!("Serialized size = {}", size);
+
     let mut encoded_buf = [0xFFu8; corncobs::max_encoded_len(RotRequest::MAX_SIZE)];
     let size = corncobs::encode_buf(&req_buf[..size], &mut encoded_buf);
 
