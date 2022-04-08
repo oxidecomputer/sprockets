@@ -36,7 +36,6 @@ fn main() -> anyhow::Result<()> {
         Op::GetMeasurements => RotOp::GetMeasurements(Nonce::new()),
     };
     let req = RotRequest::V1 { id: 1, op };
-
     uart.send(req)?;
     let rsp = uart.recv()?;
 
