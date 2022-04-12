@@ -41,6 +41,7 @@ pub enum RecvError {
     SerialPortIoError(#[from] std::io::Error),
     #[error("serial port attach error: {0}")]
     SerialPortAttachError(#[from] serialport::Error),
+
     #[error("message exceeds maximum COBS encoded size")]
     MsgTooLarge,
     #[error("message is not COBS encoded: {0}")]
