@@ -2,15 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! Messages used for setting up a trusted session
+
 use derive_more::From;
 
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 use sprockets_common::{Ed25519PublicKey, Nonce};
-
-mod client;
-pub use client::Client;
-mod msgs;
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///
@@ -65,14 +63,14 @@ pub enum HandshakeMsgDataV1 {
 /// The first message sent in a secure session handshake
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct ClientHello {
-    nonce: Nonce,
-    public_key: Ed25519PublicKey,
+    pub nonce: Nonce,
+    pub public_key: Ed25519PublicKey,
 }
 
 /// The first message sent by the server in a secure session handshake.
 /// This is sent after the `ClientHello` is received.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct ServerHello {
-    nonce: Nonce,
-    public_key: Ed25519PublicKey,
+    pub nonce: Nonce,
+    pub public_key: Ed25519PublicKey,
 }
