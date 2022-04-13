@@ -3,12 +3,14 @@ members = [
     "rot",
     "host",
     "common",
+    "session",
 ]
 
 default-members = [
     "rot",
     "host",
     "common",
+    "session"
 ]
 
 [profile.dev]
