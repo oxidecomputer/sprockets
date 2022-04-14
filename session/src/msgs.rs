@@ -8,7 +8,9 @@ use derive_more::From;
 
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
-use sprockets_common::{Ed25519PublicKey, Nonce};
+use sprockets_common::certificates::Ed25519Certificates;
+use sprockets_common::measurements::Measurements;
+use sprockets_common::{Ed25519PublicKey, Ed25519Signature, Nonce};
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///
@@ -55,7 +57,7 @@ impl HandshakeMsgV1 {
 pub enum HandshakeMsgDataV1 {
     ClientHello(ClientHello),
     ServerHello(ServerHello),
-    Identity,
+    Identity(Identity),
     IdentityVerify,
     Finished,
 }
@@ -73,4 +75,13 @@ pub struct ClientHello {
 pub struct ServerHello {
     pub nonce: Nonce,
     pub public_key: Ed25519PublicKey,
+}
+
+/// A message containing certs and measurements, along with a measurement
+/// signature, sent by each side before that side sends any authentication messages.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+pub struct Identity {
+    pub certs: Ed25519Certificates,
+    pub measurements: Measurements,
+    pub measurements_sig: Ed25519Signature,
 }

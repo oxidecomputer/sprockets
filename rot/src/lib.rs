@@ -150,12 +150,10 @@ impl RotSprocket {
             }
             RotOp::GetMeasurements(nonce) => {
                 // We sign the serialized form.
-                let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-                let size = serialize(&mut buf, &self.measurements)?;
-                buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
-                let sig = self.measurement_keypair.sign(&buf[..size + nonce.len()]);
+                let (buf, size) = self.measurements.serialize_with_nonce(&nonce);
+                let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
-                RotResult::Measurements(self.measurements.clone(), nonce.clone(), sig)
+                RotResult::Measurements(self.measurements.clone(), nonce, sig)
             }
         };
         Ok(RotResponse::V1 { id, result })
@@ -217,17 +215,12 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-            let size = serialize(&mut signed_buf, &measurements).unwrap();
-            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+            let (signed_buf, size) = measurements.serialize_with_nonce(&nonce);
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
             assert!(measurement_pub_key
-                .verify(
-                    &signed_buf[..size + nonce.len()],
-                    &salty::Signature::from(&sig.0)
-                )
+                .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());
 
             assert!(measurements.host.is_none());
@@ -272,17 +265,12 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-            let size = serialize(&mut signed_buf, &measurements).unwrap();
-            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+            let (signed_buf, size) = measurements.serialize_with_nonce(&nonce);
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
             assert!(measurement_pub_key
-                .verify(
-                    &signed_buf[..size + nonce.len()],
-                    &salty::Signature::from(&sig.0)
-                )
+                .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());
 
             // Ensure we got back the measurements we sent

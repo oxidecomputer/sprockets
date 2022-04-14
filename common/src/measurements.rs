@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use derive_more::From;
-use hubpack::SerializedSize;
+use hubpack::{serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
 use crate::certificates::SerialNumber;
-use crate::Sha3_256Digest;
+use crate::{Nonce, Sha3_256Digest};
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
@@ -18,6 +18,20 @@ pub struct Measurements {
     pub sp: Option<SpMeasurements>,
     pub hbs: Option<HbsMeasurements>,
     pub host: Option<HostMeasurements>,
+}
+
+impl Measurements {
+    /// Serialize the measurements and concatenate with a nonce in the buffer.
+    /// This is useful for signing and verification.
+    pub fn serialize_with_nonce(
+        &self,
+        nonce: &Nonce,
+    ) -> ([u8; Measurements::MAX_SIZE + Nonce::SIZE], usize) {
+        let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
+        let size = serialize(&mut buf, &self).unwrap();
+        buf[size..size + nonce.len()].copy_from_slice(nonce.as_slice());
+        (buf, size + nonce.len())
+    }
 }
 
 #[derive(

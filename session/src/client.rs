@@ -2,10 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use chacha20poly1305::aead::heapless::Vec;
-use chacha20poly1305::aead::{Aead, NewAead};
+use chacha20poly1305::aead::heapless;
+use chacha20poly1305::aead::{Aead, AeadInPlace, NewAead};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key};
 use derive_more::From;
+use ed25519;
+use ed25519_dalek;
 use hkdf::Hkdf;
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
@@ -13,7 +15,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroizing;
 
 use crate::msgs::*;
-use sprockets_common::certificates::Ed25519Certificates;
+use sprockets_common::certificates::{
+    Ed25519Certificates, Ed25519CertificatesError, Ed25519Signature, Ed25519Verifier,
+};
 use sprockets_common::{Ed25519PublicKey, Nonce};
 
 // The length of the nonce for ChaCha20Poly1305
@@ -28,21 +32,33 @@ const DIGEST_LEN: usize = 32;
 // The length of a ChaCha20Poly1305 Key
 const KEY_LEN: usize = 32;
 
-// The length of a label used to create an ApplicationSalt
-const APP_SALT_LABEL_LEN: usize = 12;
+// The length of a ChaCha20Poly1305 authentication tag
+const TAG_LEN: usize = 16;
+
+const MAX_HANDSHAKE_MSG_SIZE: usize = HandshakeMsgV1::MAX_SIZE + TAG_LEN;
+
+type Vec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
 
 pub enum State {
     Hello {
+        client_nonce: Nonce,
         secret: EphemeralSecret,
     },
     WaitForIdentity {
+        client_nonce: Nonce,
+        server_nonce: Nonce,
+        handshake_state: HandshakeState,
+    },
+    WaitForIdentityVerify {
+        server_identity: Identity,
         server_nonce: Nonce,
         handshake_state: HandshakeState,
     },
 }
 
 pub struct Client {
-    certs: Ed25519Certificates,
+    manufacturing_public_key: Ed25519PublicKey,
+    client_certs: Ed25519Certificates,
     transcript: Sha3_256,
     // Must be an option to allow moving out of the type when switching between
     // states.
@@ -55,6 +71,8 @@ pub enum Error {
     UnexpectedMsg,
     Hubpack(hubpack::error::Error),
     DecryptError,
+    Certificates(Ed25519CertificatesError),
+    BadMeasurementsSig,
 }
 
 impl Client {
@@ -63,15 +81,24 @@ impl Client {
     /// Return the Client and the size of the serialize message.
     ///
     /// `buf` must be at least `HandshakeMsgV1::MAX_SIZE` bytes;
-    pub fn init(certs: Ed25519Certificates, buf: &mut [u8]) -> (Client, usize) {
+    pub fn init(
+        manufacturing_public_key: Ed25519PublicKey,
+        client_certs: Ed25519Certificates,
+        buf: &mut [u8],
+    ) -> (Client, usize) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
 
-        let state = State::Hello { secret };
+        let client_nonce = Nonce::new();
+
+        let state = State::Hello {
+            secret,
+            client_nonce,
+        };
 
         let msg = HandshakeMsgV1::new(
             ClientHello {
-                nonce: Nonce::new(),
+                nonce: client_nonce.clone(),
                 public_key: Ed25519PublicKey(public_key.to_bytes()),
             }
             .into(),
@@ -82,7 +109,8 @@ impl Client {
         transcript.update(&buf[..size]);
 
         let client = Client {
-            certs,
+            manufacturing_public_key,
+            client_certs,
             transcript,
             state: Some(state),
         };
@@ -92,20 +120,30 @@ impl Client {
 
     /// Handle a message from the server
     ///
-    /// Intentionally return an opaque error.
-    pub fn handle(&mut self, buf: &[u8]) -> Result<(), Error> {
+    /// We take a mutable buffer, because we decrypt in place to prevent the
+    // need to allocate.
+    pub fn handle(&mut self, buf: &mut Vec) -> Result<(), Error> {
         let state = self.state.take().unwrap();
         match state {
-            State::Hello { secret } => self.handle_hello(secret, buf),
+            State::Hello {
+                client_nonce,
+                secret,
+            } => self.handle_hello(client_nonce, secret, buf),
             State::WaitForIdentity {
+                client_nonce,
                 server_nonce,
                 handshake_state,
-            } => self.handle_identity(server_nonce, handshake_state, buf),
+            } => self.handle_identity(client_nonce, server_nonce, handshake_state, buf),
             _ => unimplemented!(),
         }
     }
 
-    fn handle_hello(&mut self, secret: EphemeralSecret, buf: &[u8]) -> Result<(), Error> {
+    fn handle_hello(
+        &mut self,
+        client_nonce: Nonce,
+        secret: EphemeralSecret,
+        buf: &mut Vec,
+    ) -> Result<(), Error> {
         let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
         Self::validate_version(&msg.version)?;
         if let HandshakeMsgDataV1::ServerHello(hello) = msg.data {
@@ -117,6 +155,7 @@ impl Client {
             let handshake_state =
                 HandshakeState::new(secret, &public_key, transcript_hash.as_slice());
             self.state = Some(State::WaitForIdentity {
+                client_nonce,
                 server_nonce: hello.nonce,
                 handshake_state,
             });
@@ -126,13 +165,51 @@ impl Client {
         }
     }
 
+    // TODO: Add a Corpus to the Client state and validate measurements
     fn handle_identity(
         &mut self,
+        client_nonce: Nonce,
         server_nonce: Nonce,
-        handshake_state: HandshakeState,
-        buf: &[u8],
+        hs: HandshakeState,
+        buf: &mut Vec,
     ) -> Result<(), Error> {
-        unimplemented!();
+        let nonce = chach20poly1305nonce(hs.server_iv.as_ref(), hs.server_nonce_counter);
+        let nonce = chacha20poly1305::Nonce::from_slice(&nonce);
+        hs.server_aead
+            .decrypt_in_place(nonce, b"", buf)
+            .map_err(|_| Error::DecryptError)?;
+        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
+        Self::validate_version(&msg.version)?;
+        if let HandshakeMsgDataV1::Identity(identity) = msg.data {
+            self.transcript.update(buf);
+
+            // Validate the certificate chains
+            identity
+                .certs
+                .validate(&self.manufacturing_public_key, &DalekVerifier)?;
+
+            // Ensure measurements concatenated with the client nonce are
+            // properly signed.
+            let (buf, size) = identity.measurements.serialize_with_nonce(&client_nonce);
+            DalekVerifier
+                .verify(
+                    &identity.certs.measurement.subject_public_key,
+                    &buf[..size],
+                    &identity.measurements_sig,
+                )
+                .map_err(|_| Error::BadMeasurementsSig)?;
+
+            // Transition to the next state
+            self.state = Some(State::WaitForIdentityVerify {
+                server_identity: identity,
+                server_nonce,
+                handshake_state: hs,
+            });
+
+            Ok(())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
     }
 
     fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
@@ -148,7 +225,8 @@ pub struct HandshakeState {
     client_aead: ChaCha20Poly1305,
     server_aead: ChaCha20Poly1305,
     application_salt: Zeroizing<[u8; DIGEST_LEN]>,
-    nonce_counter: u64,
+    client_nonce_counter: u64,
+    server_nonce_counter: u64,
     server_iv: Zeroizing<[u8; NONCE_LEN]>,
     client_iv: Zeroizing<[u8; NONCE_LEN]>,
     server_finished_key: Zeroizing<[u8; DIGEST_LEN]>,
@@ -245,7 +323,8 @@ impl HandshakeState {
             client_aead,
             server_aead,
             application_salt,
-            nonce_counter: 0,
+            client_nonce_counter: 0,
+            server_nonce_counter: 0,
             server_iv,
             client_iv,
             server_finished_key,
@@ -259,7 +338,7 @@ impl HandshakeState {
 // XOR the IV with the big-endian counter 0 padded to the left.
 //
 // The IV is 12 bytes (96 bits)
-fn new_chach20poly1305nonce(iv: &[u8], counter: u64) -> [u8; NONCE_LEN] {
+fn chach20poly1305nonce(iv: &[u8], counter: u64) -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
     nonce[4..].copy_from_slice(&counter.to_be_bytes());
     nonce
@@ -281,4 +360,20 @@ fn digest_len_buf() -> [u8; ENCODED_LEN] {
 fn nonce_len_buf() -> [u8; ENCODED_LEN] {
     let nonce_len = u16::try_from(NONCE_LEN).unwrap();
     nonce_len.to_be_bytes()
+}
+
+pub struct DalekVerifier;
+
+impl Ed25519Verifier for DalekVerifier {
+    fn verify(
+        &self,
+        signer_public_key: &Ed25519PublicKey,
+        msg: &[u8],
+        signature: &Ed25519Signature,
+    ) -> Result<(), ()> {
+        let public_key = ed25519_dalek::PublicKey::from_bytes(&signer_public_key.0).unwrap();
+        let signature = ed25519::Signature::from_bytes(&signature.0).unwrap();
+        public_key.verify_strict(msg, &signature).map_err(|_| ())?;
+        Ok(())
+    }
 }
