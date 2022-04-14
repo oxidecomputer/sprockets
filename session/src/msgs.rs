@@ -25,7 +25,7 @@ use sprockets_common::{Ed25519PublicKey, Nonce};
 /// hubpack serialization decisions.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct HandshakeVersion {
-    version: u32,
+    pub version: u32,
 }
 
 /// A handshake request from one host to another
@@ -54,7 +54,7 @@ impl HandshakeMsgV1 {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub enum HandshakeMsgDataV1 {
     ClientHello(ClientHello),
-    ServerHello,
+    ServerHello(ServerHello),
     Identity,
     IdentityVerify,
     Finished,

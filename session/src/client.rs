@@ -5,6 +5,7 @@
 use chacha20poly1305::aead::heapless::Vec;
 use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
+use derive_more::From;
 use hkdf::Hkdf;
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
@@ -12,37 +13,44 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroizing;
 
 use crate::msgs::*;
+use sprockets_common::certificates::Ed25519Certificates;
 use sprockets_common::{Ed25519PublicKey, Nonce};
-
-pub struct CommonState {
-    transcript: Sha3_256,
-}
 
 pub enum State {
     Hello {
         secret: EphemeralSecret,
-        public_key: PublicKey,
     },
     WaitForIdentity {
+        server_nonce: Nonce,
         handshake_state: HandshakeState,
     },
 }
 
 pub struct Client {
-    common: CommonState,
-    state: State,
+    transcript: Sha3_256,
+    // Must be an option to allow moving out of the type when switching between
+    // states.
+    state: Option<State>,
+}
+
+#[derive(Debug, PartialEq, Eq, From)]
+pub enum Error {
+    BadVersion,
+    UnexpectedMsg,
+    Hubpack(hubpack::error::Error),
 }
 
 impl Client {
-    pub fn init() -> (Client, HandshakeMsgV1) {
-        let common = CommonState {
-            transcript: Sha3_256::new(),
-        };
+    /// Initialize the Client and serialize the ClientHello message into `buf`.
+    ///
+    /// Return the Client and the size of the serialize message.
+    ///
+    /// `buf` must be at least `HandshakeMsgV1::MAX_SIZE` bytes;
+    pub fn init(certs: Ed25519Certificates, buf: &mut [u8]) -> (Client, usize) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
 
-        let state = State::Hello { secret, public_key };
-        let client = Client { common, state };
+        let state = State::Hello { secret };
 
         let msg = HandshakeMsgV1::new(
             ClientHello {
@@ -52,7 +60,55 @@ impl Client {
             .into(),
         );
 
-        (client, msg)
+        let mut transcript = Sha3_256::new();
+        let size = serialize(buf, &msg).unwrap();
+        transcript.update(&buf[..size]);
+
+        let client = Client {
+            transcript,
+            state: Some(state),
+        };
+
+        (client, size)
+    }
+
+    /// Handle a message from the server
+    ///
+    /// Intentionally return an opaque error.
+    pub fn handle(&mut self, buf: &[u8]) -> Result<(), Error> {
+        let state = self.state.take().unwrap();
+        match state {
+            State::Hello { secret } => self.handle_hello(secret, buf),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn handle_hello(&mut self, secret: EphemeralSecret, buf: &[u8]) -> Result<(), Error> {
+        let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
+        Self::validate_version(&msg.version)?;
+        if let HandshakeMsgDataV1::ServerHello(hello) = msg.data {
+            self.transcript.update(buf);
+            // We clone so we can use the intermediate hash value but maintain
+            // the running hash computation.
+            let transcript_hash = self.transcript.clone().finalize();
+            let public_key = PublicKey::from(hello.public_key.0);
+            let handshake_state =
+                HandshakeState::new(secret, &public_key, transcript_hash.as_slice());
+            self.state = Some(State::WaitForIdentity {
+                server_nonce: hello.nonce,
+                handshake_state,
+            });
+            Ok(())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
+    }
+
+    fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
+        if version.version != 1 {
+            return Err(Error::BadVersion);
+        }
+        Ok(())
     }
 }
 
@@ -70,11 +126,11 @@ impl HandshakeState {
     /// Compute a shared secret via x25519 and derive HandshakeKeys using HKDF
     pub fn new(
         my_secret: EphemeralSecret,
-        peer_public_key: PublicKey,
+        peer_public_key: &PublicKey,
         transcript: &[u8],
     ) -> HandshakeState {
         let initial_salt = [0u8; 32];
-        let shared_secret = my_secret.diffie_hellman(&peer_public_key);
+        let shared_secret = my_secret.diffie_hellman(peer_public_key);
         let handshake_secret = Hkdf::<Sha3_256>::new(Some(&initial_salt), shared_secret.as_bytes());
 
         let mut client_key_buf = Zeroizing::new([0u8; KEY_LEN]);
