@@ -20,6 +20,9 @@ use sprockets_common::{Ed25519PublicKey, Nonce};
 
 type Vec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
 
+// The current state of the handshake state machine
+//
+// Each state has different data associated with it.
 pub enum State {
     Hello {
         client_nonce: Nonce,

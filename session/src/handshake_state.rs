@@ -157,3 +157,60 @@ fn nonce_len_buf() -> [u8; ENCODED_LEN] {
     let nonce_len = u16::try_from(NONCE_LEN).unwrap();
     nonce_len.to_be_bytes()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand_core::OsRng;
+
+    impl core::fmt::Debug for HandshakeState {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("HandshakeState")
+                .field("application_salt", &self.application_salt)
+                .field("client_nonce_counter", &self.client_nonce_counter)
+                .field("server_nonce_counter", &self.server_nonce_counter)
+                .field("server_iv", &self.server_iv)
+                .field("client_iv", &self.client_iv)
+                .field("server_finished_key", &self.server_finished_key)
+                .field("client_finished_key", &self.client_finished_key)
+                .finish()
+        }
+    }
+
+    // We must skip the AEAD impls
+    impl PartialEq for HandshakeState {
+        fn eq(&self, other: &Self) -> bool {
+            self.application_salt == other.application_salt
+                && self.client_nonce_counter == other.client_nonce_counter
+                && self.server_nonce_counter == other.server_nonce_counter
+                && self.server_iv == other.server_iv
+                && self.client_iv == other.client_iv
+                && self.server_finished_key == other.server_finished_key
+                && self.client_finished_key == other.client_finished_key
+        }
+    }
+
+    impl Eq for HandshakeState {}
+
+    #[test]
+    fn sanity_check() {
+        let client_secret = EphemeralSecret::new(OsRng);
+        let client_public_key = PublicKey::from(&client_secret);
+        let server_secret = EphemeralSecret::new(OsRng);
+        let server_public_key = PublicKey::from(&server_secret);
+        let transcript = [0u8; 32];
+
+        let hs1 = HandshakeState::new(client_secret, &server_public_key, &transcript);
+        let hs2 = HandshakeState::new(server_secret, &client_public_key, &transcript);
+
+        assert_eq!(hs1, hs2);
+
+        // Ensure all keys are different
+        assert_ne!(hs1.application_salt, hs1.server_finished_key);
+        assert_ne!(hs1.application_salt, hs1.client_finished_key);
+        assert_ne!(hs1.server_finished_key, hs1.client_finished_key);
+
+        // Ensure IVs are different
+        assert_ne!(hs1.server_iv, hs1.client_iv);
+    }
+}
