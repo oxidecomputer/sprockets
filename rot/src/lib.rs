@@ -9,12 +9,12 @@
 
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519PublicKey, Ed25519Signature};
 use sprockets_common::measurements::{
-    HbsMeasurements, MeasurementCorpus, Measurements, RotMeasurements, SpMeasurements,
+    HbsMeasurements, Measurements, RotMeasurements, SpMeasurements,
 };
 use sprockets_common::msgs::*;
-use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
+use sprockets_common::{random_buf, Sha3_256Digest};
 
-use hubpack::{deserialize, serialize, SerializedSize};
+use hubpack::{deserialize, serialize};
 use salty;
 
 /// A key management and measurement service run on the RoT
@@ -31,9 +31,6 @@ pub struct RotSprocket {
 
     /// Measurements get filled in by the running service
     measurements: Measurements,
-
-    /// The expected value of measurements (shipped with fw update)
-    corpus: MeasurementCorpus,
 }
 
 impl RotSprocket {
@@ -45,7 +42,6 @@ impl RotSprocket {
             dhe_keypair: config.dhe_keypair,
             certificates: config.certificates,
             measurements: Measurements::default(),
-            corpus: config.corpus,
         };
         rot.take_fake_measurements();
         rot
@@ -69,7 +65,6 @@ impl RotSprocket {
 pub struct RotConfig {
     pub manufacturing_public_key: Ed25519PublicKey,
     pub certificates: Ed25519Certificates,
-    pub corpus: MeasurementCorpus,
 
     // TODO: Should we instead use the generic array forms and convert to salty
     // as needed?
@@ -93,13 +88,11 @@ impl RotConfig {
             &measurement_keypair,
             &dhe_keypair,
         );
-        let corpus = MeasurementCorpus::default();
         let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
 
         RotConfig {
             manufacturing_public_key,
             certificates,
-            corpus,
             device_id_keypair,
             measurement_keypair,
             dhe_keypair,
@@ -164,6 +157,7 @@ impl RotSprocket {
 mod tests {
     use super::*;
     use sprockets_common::measurements::HostMeasurements;
+    use sprockets_common::Nonce;
 
     #[test]
     fn test_get_certificates() {

@@ -10,6 +10,7 @@ use sprockets_common::{Ed25519PublicKey, Nonce};
 
 mod client;
 pub use client::Client;
+mod handshake_state;
 mod msgs;
 
 /// Every version of the handshake message should start with a HandshakeVersion
