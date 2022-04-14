@@ -58,7 +58,7 @@ pub enum HandshakeMsgDataV1 {
     ClientHello(ClientHello),
     ServerHello(ServerHello),
     Identity(Identity),
-    IdentityVerify,
+    IdentityVerify(IdentityVerify),
     Finished,
 }
 
@@ -84,4 +84,11 @@ pub struct Identity {
     pub certs: Ed25519Certificates,
     pub measurements: Measurements,
     pub measurements_sig: Ed25519Signature,
+}
+
+/// Prove to the the receiver that the sender possesses the private key
+/// corresponding to the DHE cert sent in the Identity message.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+pub struct IdentityVerify {
+    pub transcript_signature: Ed25519Signature,
 }

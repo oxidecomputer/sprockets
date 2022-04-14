@@ -57,6 +57,7 @@ pub enum Error {
     DecryptError,
     Certificates(Ed25519CertificatesError),
     BadMeasurementsSig,
+    BadTranscriptSig,
 }
 
 impl Client {
@@ -118,6 +119,12 @@ impl Client {
                 server_nonce,
                 handshake_state,
             } => self.handle_identity(client_nonce, server_nonce, handshake_state, buf),
+            State::WaitForIdentityVerify {
+                server_identity,
+                server_nonce,
+                handshake_state,
+            } => self.handle_identity_verify(server_identity, server_nonce, handshake_state, buf),
+
             _ => unimplemented!(),
         }
     }
@@ -157,14 +164,8 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<(), Error> {
-        let nonce = chach20poly1305nonce(hs.server_iv.as_ref(), hs.server_nonce_counter);
-        let nonce = chacha20poly1305::Nonce::from_slice(&nonce);
-        hs.server_aead
-            .decrypt_in_place(nonce, b"", buf)
-            .map_err(|_| Error::DecryptError)?;
-        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
-        Self::validate_version(&msg.version)?;
-        if let HandshakeMsgDataV1::Identity(identity) = msg.data {
+        let msg_data = Self::decrypt_and_deserialize(hs, buf)?;
+        if let HandshakeMsgDataV1::Identity(identity) = msg_data {
             self.transcript.update(buf);
 
             // Validate the certificate chains
@@ -183,9 +184,6 @@ impl Client {
                 )
                 .map_err(|_| Error::BadMeasurementsSig)?;
 
-            // Increment the serveer nonce counter in anticipation of the next message.
-            hs.server_nonce_counter += 1;
-
             // Transition to the next state
             self.state = Some(State::WaitForIdentityVerify {
                 server_identity: identity,
@@ -197,6 +195,62 @@ impl Client {
         } else {
             Err(Error::UnexpectedMsg)
         }
+    }
+
+    fn handle_identity_verify(
+        &mut self,
+        server_identity: Identity,
+        server_nonce: Nonce,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<(), Error> {
+        let msg_data = Self::decrypt_and_deserialize(hs, buf)?;
+        if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
+            // We clone so we can use the intermediate hash value but maintain
+            // the running hash computation.
+            //
+            // The current transcript hash is:
+            //   H(ClientHello || ServerHello || Identity)
+            //
+            let transcript_hash = self.transcript.clone().finalize();
+            self.transcript.update(buf);
+
+            // Verify the transcript hash signature
+            DalekVerifier
+                .verify(
+                    &server_identity.certs.dhe.subject_public_key,
+                    &transcript_hash,
+                    &identity_verify.transcript_signature,
+                )
+                .map_err(|_| Error::BadTranscriptSig)?;
+
+            // Transition to the next state
+            self.state = Some(State::WaitForFinished {});
+
+            Ok(())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
+    }
+
+    // 1. Decrypt buf in place returning the plaintext in buf
+    // 2. Deserialize the message
+    // 3. Validate that the message version is correct
+    fn decrypt_and_deserialize(
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<HandshakeMsgDataV1, Error> {
+        let nonce = chach20poly1305nonce(hs.server_iv.as_ref(), hs.server_nonce_counter);
+        let nonce = chacha20poly1305::Nonce::from_slice(&nonce);
+        hs.server_aead
+            .decrypt_in_place(nonce, b"", buf)
+            .map_err(|_| Error::DecryptError)?;
+
+        // Increment the server nonce counter in anticipation of the next message.
+        hs.server_nonce_counter += 1;
+        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
+        Self::validate_version(&msg.version)?;
+        Ok(msg.data)
     }
 
     fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
