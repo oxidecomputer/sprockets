@@ -7,7 +7,7 @@ use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
 
 use crate::certificates::SerialNumber;
-use crate::Sha256Digest;
+use crate::Sha3_256Digest;
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
@@ -24,28 +24,28 @@ pub struct Measurements {
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct RotMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct SpMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HbsMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HostMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(

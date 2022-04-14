@@ -12,7 +12,7 @@ use sprockets_common::measurements::{
     HbsMeasurements, MeasurementCorpus, Measurements, RotMeasurements, SpMeasurements,
 };
 use sprockets_common::msgs::*;
-use sprockets_common::{random_buf, Nonce, Sha256Digest};
+use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
 
 use hubpack::{deserialize, serialize, SerializedSize};
 use salty;
@@ -53,15 +53,15 @@ impl RotSprocket {
 
     pub fn take_fake_measurements(&mut self) {
         self.measurements.rot = Some(RotMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
 
         self.measurements.sp = Some(SpMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
 
         self.measurements.hbs = Some(HbsMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
     }
 }
@@ -238,7 +238,7 @@ mod tests {
         // Add host measurements
 
         let host_measurements = HostMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         };
         let req = RotRequest::V1 {
             id: 2,

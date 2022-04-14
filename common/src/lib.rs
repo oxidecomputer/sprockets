@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.use derive_more::From;
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), no_std)]
@@ -9,6 +9,8 @@
 #[cfg(feature = "rand")]
 use rand::{rngs::OsRng, RngCore};
 
+use derive_more::From;
+use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
 use serde_big_array::big_array;
 
@@ -28,7 +30,7 @@ pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
-pub struct Sha256Digest(pub [u8; 32]);
+pub struct Sha3_256Digest(pub [u8; 32]);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Nonce(pub [u8; 32]);
@@ -64,15 +66,4 @@ pub fn random_buf() -> [u8; 32] {
 #[cfg(not(feature = "rand"))]
 pub fn random_buf() -> [u8; 32] {
     [0u8; 32]
-}
-use derive_more::From;
-use hubpack::SerializedSize;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
 }
