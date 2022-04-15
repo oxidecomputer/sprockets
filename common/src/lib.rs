@@ -27,6 +27,10 @@ pub struct Ed25519PublicKey(pub [u8; 32]);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
+// Output of HMAC<Sha3_256>
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+pub struct Hmac(pub [u8; 32]);
+
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]

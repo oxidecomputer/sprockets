@@ -7,6 +7,7 @@ use chacha20poly1305::aead::{heapless, AeadInPlace};
 use derive_more::From;
 use ed25519;
 use ed25519_dalek;
+use hmac::{Hmac, Mac};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -38,6 +39,16 @@ pub enum State {
         server_nonce: Nonce,
         handshake_state: HandshakeState,
     },
+    WaitForFinished {
+        server_identity: Identity,
+        server_nonce: Nonce,
+        handshake_state: HandshakeState,
+    },
+    SendMsgs {
+        server_identity: Identity,
+        server_nonce: Nonce,
+        handshake_state: HandshakeState,
+    },
 }
 
 pub struct Client {
@@ -58,6 +69,7 @@ pub enum Error {
     Certificates(Ed25519CertificatesError),
     BadMeasurementsSig,
     BadTranscriptSig,
+    BadMac,
 }
 
 impl Client {
@@ -124,8 +136,16 @@ impl Client {
                 server_nonce,
                 handshake_state,
             } => self.handle_identity_verify(server_identity, server_nonce, handshake_state, buf),
-
-            _ => unimplemented!(),
+            State::WaitForFinished {
+                server_identity,
+                server_nonce,
+                handshake_state,
+            } => self.handle_finished(server_identity, server_nonce, handshake_state, buf),
+            State::SendMsgs {
+                server_identity,
+                server_nonce,
+                handshake_state,
+            } => unimplemented!(),
         }
     }
 
@@ -164,7 +184,7 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<(), Error> {
-        let msg_data = Self::decrypt_and_deserialize(hs, buf)?;
+        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
         if let HandshakeMsgDataV1::Identity(identity) = msg_data {
             self.transcript.update(buf);
 
@@ -204,7 +224,7 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<(), Error> {
-        let msg_data = Self::decrypt_and_deserialize(hs, buf)?;
+        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
         if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
             // We clone so we can use the intermediate hash value but maintain
             // the running hash computation.
@@ -225,7 +245,49 @@ impl Client {
                 .map_err(|_| Error::BadTranscriptSig)?;
 
             // Transition to the next state
-            self.state = Some(State::WaitForFinished {});
+            self.state = Some(State::WaitForFinished {
+                server_identity,
+                server_nonce,
+                handshake_state: hs,
+            });
+
+            Ok(())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
+    }
+
+    fn handle_finished(
+        &mut self,
+        server_identity: Identity,
+        server_nonce: Nonce,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<(), Error> {
+        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
+        if let HandshakeMsgDataV1::Finished(finished) = msg_data {
+            // We clone so we can use the intermediate hash value but maintain
+            // the running hash computation.
+            //
+            // The current transcript hash is:
+            //   H(ClientHello || ServerHello || Identity || IdentityVerify)
+            //
+            let transcript_hash = self.transcript.clone().finalize();
+            self.transcript.update(buf);
+
+            // Verify the MAC over the transcript hash
+            let mut mac =
+                Hmac::<Sha3_256>::new_from_slice(hs.server_finished_key.as_ref()).unwrap();
+            mac.update(&transcript_hash);
+            mac.verify_slice(&finished.mac.0)
+                .map_err(|_| Error::BadMac)?;
+
+            // Transition to the next state
+            self.state = Some(State::SendMsgs {
+                server_identity,
+                server_nonce,
+                handshake_state: hs,
+            });
 
             Ok(())
         } else {
@@ -237,7 +299,7 @@ impl Client {
     // 2. Deserialize the message
     // 3. Validate that the message version is correct
     fn decrypt_and_deserialize(
-        mut hs: HandshakeState,
+        hs: &mut HandshakeState,
         buf: &mut Vec,
     ) -> Result<HandshakeMsgDataV1, Error> {
         let nonce = chach20poly1305nonce(hs.server_iv.as_ref(), hs.server_nonce_counter);

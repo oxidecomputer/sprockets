@@ -25,3 +25,4 @@ sha3 = "0.10.1"
 chacha20poly1305 = { version = "0.10.0-pre", features = ["heapless"] }
 hkdf = "0.12.3"
 zeroize = "1.5.4"
+hmac = "0.12.1"
