@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     uart.send(req)?;
     let rsp = uart.recv()?;
 
-    println!("{:?}", rsp);
+    println!("{:x?}", rsp);
 
     Ok(())
 }

@@ -17,6 +17,7 @@ use crate::msgs::*;
 use sprockets_common::certificates::{
     Ed25519Certificates, Ed25519CertificatesError, Ed25519Signature, Ed25519Verifier,
 };
+use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Nonce};
 
 type Vec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
@@ -40,13 +41,25 @@ pub enum State {
         handshake_state: HandshakeState,
     },
     WaitForFinished {
-        server_identity: Identity,
         server_nonce: Nonce,
         handshake_state: HandshakeState,
     },
-    SendMsgs {
-        server_identity: Identity,
-        server_nonce: Nonce,
+    WaitForSignedMeasurementsFromRoT {
+        handshake_state: HandshakeState,
+    },
+    SendIdentity {
+        handshake_state: HandshakeState,
+    },
+    WaitForSignedTranscriptFromRoT {
+        handshake_state: HandshakeState,
+    },
+    SendIdentityVerify {
+        handshake_state: HandshakeState,
+    },
+    SendFinished {
+        handshake_state: HandshakeState,
+    },
+    Complete {
         handshake_state: HandshakeState,
     },
 }
@@ -72,6 +85,58 @@ pub enum Error {
     BadMac,
 }
 
+/// A token that allows calling the `handle` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct RecvToken(usize);
+
+impl RecvToken {
+    fn new() -> RecvToken {
+        RecvToken(0)
+    }
+}
+
+/// A token that allows calling the `next_msg` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct SendToken(usize);
+
+impl SendToken {
+    fn new() -> SendToken {
+        SendToken(0)
+    }
+}
+
+/// A token that allows calling the `new_session` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct CompletionToken(usize);
+
+impl CompletionToken {
+    fn new() -> CompletionToken {
+        CompletionToken(0)
+    }
+}
+
+/// This is the return value from a Client operation. It instructs the user what
+/// to do next.
+#[derive(Debug, From)]
+pub enum UserAction {
+    /// The user should receive a message over the transport and then call
+    /// `handle`.
+    Recv(RecvToken),
+
+    /// The user should call the `next_msg` method to provide a message to be
+    /// sent over the transport.
+    Send(SendToken),
+
+    // The user should send the included `RotRequest` to the RoT and then call
+    // `handle_rot_result` with the reply received from the RoT.
+    SendToRot(RotOp),
+
+    // The handshake is complete and the user should call the `new_session`
+    // method to get back a `Session` object that can be used to encrypt
+    // application messages to send and decrypt received application messages.
+    Complete(CompletionToken),
+}
+
 impl Client {
     /// Initialize the Client and serialize the ClientHello message into `buf`.
     ///
@@ -82,7 +147,7 @@ impl Client {
         manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
         buf: &mut [u8],
-    ) -> (Client, usize) {
+    ) -> (Client, usize, RecvToken) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
 
@@ -112,14 +177,14 @@ impl Client {
             state: Some(state),
         };
 
-        (client, size)
+        (client, size, RecvToken::new())
     }
 
     /// Handle a message from the server
     ///
     /// We take a mutable buffer, because we decrypt in place to prevent the
     // need to allocate.
-    pub fn handle(&mut self, buf: &mut Vec) -> Result<(), Error> {
+    pub fn handle(&mut self, buf: &mut Vec, _token: RecvToken) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
             State::Hello {
@@ -137,16 +202,39 @@ impl Client {
                 handshake_state,
             } => self.handle_identity_verify(server_identity, server_nonce, handshake_state, buf),
             State::WaitForFinished {
-                server_identity,
                 server_nonce,
                 handshake_state,
-            } => self.handle_finished(server_identity, server_nonce, handshake_state, buf),
-            State::SendMsgs {
-                server_identity,
-                server_nonce,
-                handshake_state,
-            } => unimplemented!(),
+            } => self.handle_finished(server_nonce, handshake_state, buf),
+            State::WaitForSignedMeasurementsFromRoT { handshake_state } => unimplemented!(),
+            _ => unimplemented!(),
         }
+    }
+
+    /// Handle the result message from an RoT
+    ///
+    /// Note that these are not encrypted nor serialized.
+    /// Serialization/Deserialization is performed by the user, because the
+    /// user also puts the `RotOp` into the `RotRequest`, and removes the
+    /// `RotResult` from the `RotResponse`. This is useful as it allows the user
+    /// to keep track of request ids for RotRequests across multiple sessions.
+    /// The session code does not have to worry about this as a result.
+    pub fn handle_rot_reply(&mut self, reply: RotResult) -> Result<UserAction, Error> {
+        unimplemented!()
+    }
+
+    pub fn next_msg(&mut self, buf: &mut Vec, _token: SendToken) -> Result<UserAction, Error> {
+        let state = self.state.take().unwrap();
+        unimplemented!();
+    }
+
+    fn create_identity_msg(
+        &mut self,
+        server_identity: Identity,
+        server_nonce: Nonce,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        unimplemented!()
     }
 
     fn handle_hello(
@@ -154,7 +242,7 @@ impl Client {
         client_nonce: Nonce,
         secret: EphemeralSecret,
         buf: &mut Vec,
-    ) -> Result<(), Error> {
+    ) -> Result<UserAction, Error> {
         let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
         Self::validate_version(&msg.version)?;
         if let HandshakeMsgDataV1::ServerHello(hello) = msg.data {
@@ -170,7 +258,7 @@ impl Client {
                 server_nonce: hello.nonce,
                 handshake_state,
             });
-            Ok(())
+            Ok(RecvToken::new().into())
         } else {
             Err(Error::UnexpectedMsg)
         }
@@ -183,7 +271,7 @@ impl Client {
         server_nonce: Nonce,
         mut hs: HandshakeState,
         buf: &mut Vec,
-    ) -> Result<(), Error> {
+    ) -> Result<UserAction, Error> {
         let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
         if let HandshakeMsgDataV1::Identity(identity) = msg_data {
             self.transcript.update(buf);
@@ -211,7 +299,7 @@ impl Client {
                 handshake_state: hs,
             });
 
-            Ok(())
+            Ok(RecvToken::new().into())
         } else {
             Err(Error::UnexpectedMsg)
         }
@@ -223,7 +311,7 @@ impl Client {
         server_nonce: Nonce,
         mut hs: HandshakeState,
         buf: &mut Vec,
-    ) -> Result<(), Error> {
+    ) -> Result<UserAction, Error> {
         let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
         if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
             // We clone so we can use the intermediate hash value but maintain
@@ -246,12 +334,11 @@ impl Client {
 
             // Transition to the next state
             self.state = Some(State::WaitForFinished {
-                server_identity,
                 server_nonce,
                 handshake_state: hs,
             });
 
-            Ok(())
+            Ok(RecvToken::new().into())
         } else {
             Err(Error::UnexpectedMsg)
         }
@@ -259,11 +346,10 @@ impl Client {
 
     fn handle_finished(
         &mut self,
-        server_identity: Identity,
         server_nonce: Nonce,
         mut hs: HandshakeState,
         buf: &mut Vec,
-    ) -> Result<(), Error> {
+    ) -> Result<UserAction, Error> {
         let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
         if let HandshakeMsgDataV1::Finished(finished) = msg_data {
             // We clone so we can use the intermediate hash value but maintain
@@ -283,13 +369,11 @@ impl Client {
                 .map_err(|_| Error::BadMac)?;
 
             // Transition to the next state
-            self.state = Some(State::SendMsgs {
-                server_identity,
-                server_nonce,
+            self.state = Some(State::WaitForSignedMeasurementsFromRoT {
                 handshake_state: hs,
             });
 
-            Ok(())
+            Ok(RotOp::GetMeasurements(server_nonce).into())
         } else {
             Err(Error::UnexpectedMsg)
         }
