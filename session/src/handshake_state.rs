@@ -179,9 +179,7 @@ impl HandshakeState {
             Role::Server => &mut self.server_aead,
         };
         aead.encrypt_in_place(&nonce, b"", buf)
-            .map_err(|_| Error::EncryptError)?;
-
-        Ok(())
+            .map_err(|_| Error::EncryptError)
     }
 
     // 1. Decrypt buf in place returning the plaintext in buf
@@ -248,7 +246,9 @@ fn nonce_len_buf() -> [u8; ENCODED_LEN] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::msgs::IdentityVerify;
     use rand_core::OsRng;
+    use sprockets_common::Ed25519Signature;
 
     impl core::fmt::Debug for HandshakeState {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -299,5 +299,81 @@ mod tests {
 
         // Ensure IVs are different
         assert_ne!(hs1.server_iv, hs1.client_iv);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let client_secret = EphemeralSecret::new(OsRng);
+        let client_public_key = PublicKey::from(&client_secret);
+        let server_secret = EphemeralSecret::new(OsRng);
+        let server_public_key = PublicKey::from(&server_secret);
+        let transcript = [0u8; 32];
+
+        let mut hs1 =
+            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
+        let mut hs2 =
+            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
+
+        let mut buf = Vec::new();
+        buf.resize_default(buf.capacity()).unwrap();
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::IdentityVerify(IdentityVerify {
+                transcript_signature: Ed25519Signature([9u8; 64]),
+            }),
+        };
+
+        // To align the keys and nonces, hs1 must encrypt, and hs2 must decrypt
+        // or vice versa.
+        hs1.serialize_and_encrypt(msg, &mut buf).unwrap();
+        let data = hs2.decrypt_and_deserialize(&mut buf).unwrap();
+
+        buf.resize_default(buf.capacity()).unwrap();
+        hs2.serialize_and_encrypt(msg, &mut buf).unwrap();
+        let data2 = hs1.decrypt_and_deserialize(&mut buf).unwrap();
+
+        assert_eq!(data, data2);
+    }
+
+    #[test]
+    fn double_encrypt_same_message_gives_diff_ciphertexts() {
+        let client_secret = EphemeralSecret::new(OsRng);
+        let client_public_key = PublicKey::from(&client_secret);
+        let server_secret = EphemeralSecret::new(OsRng);
+        let server_public_key = PublicKey::from(&server_secret);
+        let transcript = [0u8; 32];
+
+        let mut hs1 =
+            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
+        let mut hs2 =
+            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
+
+        let mut buf1 = Vec::new();
+        buf1.resize_default(buf1.capacity()).unwrap();
+        let mut buf2 = Vec::new();
+        buf2.resize_default(buf2.capacity()).unwrap();
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::IdentityVerify(IdentityVerify {
+                transcript_signature: Ed25519Signature([9u8; 64]),
+            }),
+        };
+
+        hs1.serialize_and_encrypt(msg, &mut buf1).unwrap();
+        hs1.serialize_and_encrypt(msg, &mut buf2).unwrap();
+        assert_ne!(buf1, buf2);
+
+        buf1.resize_default(buf1.capacity()).unwrap();
+        buf2.resize_default(buf2.capacity()).unwrap();
+        hs2.serialize_and_encrypt(msg, &mut buf1).unwrap();
+        hs2.serialize_and_encrypt(msg, &mut buf2).unwrap();
+        assert_ne!(buf1, buf2);
+
+        // Sanity check that encryption is different on both sides
+        buf1.resize_default(buf1.capacity()).unwrap();
+        buf2.resize_default(buf2.capacity()).unwrap();
+        hs1.serialize_and_encrypt(msg, &mut buf1).unwrap();
+        hs2.serialize_and_encrypt(msg, &mut buf2).unwrap();
+        assert_ne!(buf1, buf2);
     }
 }
