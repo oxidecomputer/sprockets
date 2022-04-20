@@ -21,6 +21,8 @@ use sprockets_common::{Ed25519PublicKey, Measurements, Nonce};
 // The current state of the handshake state machine
 //
 // Each state has different data associated with it.
+//
+// The states are transitioned in the order listed. No state is ever skipped.
 pub enum State {
     Hello {
         client_nonce: Nonce,
