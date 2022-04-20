@@ -4,15 +4,16 @@
 
 //! The state needed for handshake encyption by both client and server
 
-use chacha20poly1305::aead::NewAead;
+use chacha20poly1305::aead::{AeadInPlace, NewAead};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key};
 use hkdf::Hkdf;
-use hubpack::SerializedSize;
+use hubpack::{deserialize, serialize, SerializedSize};
 use sha3::Sha3_256;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroizing;
 
-use crate::msgs::HandshakeMsgV1;
+use crate::msgs::{HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion};
+use crate::{Error, Vec};
 
 // The length of the nonce for ChaCha20Poly1305
 pub const NONCE_LEN: usize = 12;
@@ -31,8 +32,28 @@ pub const TAG_LEN: usize = 16;
 
 pub const MAX_HANDSHAKE_MSG_SIZE: usize = HandshakeMsgV1::MAX_SIZE + TAG_LEN;
 
+// Is endpoint a client or server
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Role {
+    Client,
+    Server,
+}
+
+impl Role {
+    // Return the role of the peer
+    //
+    // Happy Opposite Day!
+    fn peer(&self) -> Role {
+        match self {
+            Role::Client => Role::Server,
+            Role::Server => Role::Client,
+        }
+    }
+}
+
 /// Keys, IVs, AEADs used for the handshake traffic
 pub struct HandshakeState {
+    pub role: Role,
     pub client_aead: ChaCha20Poly1305,
     pub server_aead: ChaCha20Poly1305,
     pub application_salt: Zeroizing<[u8; DIGEST_LEN]>,
@@ -47,6 +68,7 @@ pub struct HandshakeState {
 impl HandshakeState {
     /// Compute a shared secret via x25519 and derive HandshakeKeys using HKDF
     pub fn new(
+        role: Role,
         my_secret: EphemeralSecret,
         peer_public_key: &PublicKey,
         transcript: &[u8],
@@ -131,6 +153,7 @@ impl HandshakeState {
             .unwrap();
 
         HandshakeState {
+            role,
             client_aead,
             server_aead,
             application_salt,
@@ -142,8 +165,72 @@ impl HandshakeState {
             client_finished_key,
         }
     }
+
+    pub fn serialize_and_encrypt(
+        &mut self,
+        msg: HandshakeMsgV1,
+        buf: &mut Vec,
+    ) -> Result<(), Error> {
+        let nonce = self.chacha20poly1305nonce(self.role);
+        let size = serialize(buf, &msg)?;
+        buf.truncate(size);
+        let aead = match self.role {
+            Role::Client => &mut self.client_aead,
+            Role::Server => &mut self.server_aead,
+        };
+        aead.encrypt_in_place(&nonce, b"", buf)
+            .map_err(|_| Error::EncryptError)?;
+
+        Ok(())
+    }
+
+    // 1. Decrypt buf in place returning the plaintext in buf
+    // 2. Deserialize the message
+    // 3. Validate that the message version is correct
+    pub fn decrypt_and_deserialize(&mut self, buf: &mut Vec) -> Result<HandshakeMsgDataV1, Error> {
+        let nonce = self.chacha20poly1305nonce(self.role.peer());
+        let aead = match self.role.peer() {
+            Role::Client => &mut self.client_aead,
+            Role::Server => &mut self.server_aead,
+        };
+        aead.decrypt_in_place(&nonce, b"", buf)
+            .map_err(|_| Error::DecryptError)?;
+
+        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
+        validate_version(&msg.version)?;
+        Ok(msg.data)
+    }
+
+    // This uses the construction from section 5.3 or RFC 8446
+    //
+    // XOR the IV with the big-endian counter 0 padded to the left.
+    //
+    // The IV is 12 bytes (96 bits)
+    fn chacha20poly1305nonce(&mut self, sender_role: Role) -> chacha20poly1305::Nonce {
+        let (iv, counter) = match sender_role {
+            Role::Client => (&self.client_iv, &mut self.client_nonce_counter),
+            Role::Server => (&self.server_iv, &mut self.server_nonce_counter),
+        };
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce[4..].copy_from_slice(&counter.to_be_bytes());
+        nonce
+            .iter_mut()
+            .zip(iv.iter())
+            .for_each(|(x1, x2)| *x1 ^= *x2);
+
+        // Increment the counter in preparation for the next message
+        *counter += 1;
+
+        *chacha20poly1305::Nonce::from_slice(&nonce)
+    }
 }
 
+pub fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
+    if version.version != 1 {
+        return Err(Error::BadVersion);
+    }
+    Ok(())
+}
 // Return a 2-byte big endian encoded buf containing digest size
 fn digest_len_buf() -> [u8; ENCODED_LEN] {
     let digest_len = u16::try_from(DIGEST_LEN).unwrap();
@@ -200,8 +287,8 @@ mod tests {
         let server_public_key = PublicKey::from(&server_secret);
         let transcript = [0u8; 32];
 
-        let hs1 = HandshakeState::new(client_secret, &server_public_key, &transcript);
-        let hs2 = HandshakeState::new(server_secret, &client_public_key, &transcript);
+        let hs1 = HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
+        let hs2 = HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
 
         assert_eq!(hs1, hs2);
 

@@ -2,25 +2,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use chacha20poly1305;
-use chacha20poly1305::aead::{heapless, AeadInPlace};
 use derive_more::From;
 use ed25519;
 use ed25519_dalek;
 use hmac::{Hmac, Mac};
+use hubpack::{deserialize, serialize};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::handshake_state::{HandshakeState, MAX_HANDSHAKE_MSG_SIZE, NONCE_LEN};
-use crate::msgs::*;
-use sprockets_common::certificates::{
-    Ed25519Certificates, Ed25519CertificatesError, Ed25519Signature, Ed25519Verifier,
-};
+use crate::handshake_state::{validate_version, HandshakeState, Role};
+use crate::msgs::{ClientHello, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity};
+use crate::{Error, Vec};
+use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce};
-
-type Vec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
 
 // The current state of the handshake state machine
 //
@@ -74,21 +70,6 @@ pub struct Client {
     // Must be an option to allow moving out of the type when switching between
     // states.
     state: Option<State>,
-}
-
-#[derive(Debug, PartialEq, Eq, From)]
-pub enum Error {
-    BadVersion,
-    UnexpectedMsg,
-    UnexpecteRotMsg,
-    Hubpack(hubpack::error::Error),
-    DecryptError,
-    EncryptError,
-    Certificates(Ed25519CertificatesError),
-    BadMeasurementsSig,
-    BadTranscriptSig,
-    BadMac,
-    BadNonce,
 }
 
 /// A token that allows calling the `handle` method of a `ClientHandshake`
@@ -287,7 +268,7 @@ impl Client {
                 measurements_sig,
             }),
         };
-        Self::serialize_and_encrypt(msg, &mut hs, buf)?;
+        hs.serialize_and_encrypt(msg, buf)?;
         Ok(SendToken::new().into())
     }
 
@@ -298,15 +279,19 @@ impl Client {
         buf: &mut Vec,
     ) -> Result<UserAction, Error> {
         let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
-        Self::validate_version(&msg.version)?;
+        validate_version(&msg.version)?;
         if let HandshakeMsgDataV1::ServerHello(hello) = msg.data {
             self.transcript.update(buf);
             // We clone so we can use the intermediate hash value but maintain
             // the running hash computation.
             let transcript_hash = self.transcript.clone().finalize();
             let public_key = PublicKey::from(hello.public_key.0);
-            let handshake_state =
-                HandshakeState::new(secret, &public_key, transcript_hash.as_slice());
+            let handshake_state = HandshakeState::new(
+                Role::Client,
+                secret,
+                &public_key,
+                transcript_hash.as_slice(),
+            );
 
             // Transition to the next state
             self.state = Some(State::WaitForIdentity {
@@ -328,7 +313,7 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<UserAction, Error> {
-        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::Identity(identity) = msg_data {
             self.transcript.update(buf);
 
@@ -368,7 +353,7 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<UserAction, Error> {
-        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
             // We clone so we can use the intermediate hash value but maintain
             // the running hash computation.
@@ -406,7 +391,7 @@ impl Client {
         mut hs: HandshakeState,
         buf: &mut Vec,
     ) -> Result<UserAction, Error> {
-        let msg_data = Self::decrypt_and_deserialize(&mut hs, buf)?;
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::Finished(finished) = msg_data {
             // We clone so we can use the intermediate hash value but maintain
             // the running hash computation.
@@ -435,64 +420,6 @@ impl Client {
             Err(Error::UnexpectedMsg)
         }
     }
-
-    // 1. Decrypt buf in place returning the plaintext in buf
-    // 2. Deserialize the message
-    // 3. Validate that the message version is correct
-    fn decrypt_and_deserialize(
-        hs: &mut HandshakeState,
-        buf: &mut Vec,
-    ) -> Result<HandshakeMsgDataV1, Error> {
-        let nonce = chacha20poly1305nonce(hs.server_iv.as_ref(), hs.server_nonce_counter);
-        hs.server_aead
-            .decrypt_in_place(&nonce, b"", buf)
-            .map_err(|_| Error::DecryptError)?;
-
-        // Increment the server nonce counter in anticipation of the next message.
-        hs.server_nonce_counter += 1;
-        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
-        Self::validate_version(&msg.version)?;
-        Ok(msg.data)
-    }
-
-    fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
-        if version.version != 1 {
-            return Err(Error::BadVersion);
-        }
-        Ok(())
-    }
-
-    // `buf` must be large enough to hold serialized message + AEAD auth tag
-    fn serialize_and_encrypt(
-        msg: HandshakeMsgV1,
-        hs: &mut HandshakeState,
-        buf: &mut Vec,
-    ) -> Result<(), Error> {
-        let nonce = chacha20poly1305nonce(hs.client_iv.as_ref(), hs.client_nonce_counter);
-        let size = serialize(buf, &msg)?;
-        hs.client_aead
-            .encrypt_in_place(&nonce, b"", buf)
-            .map_err(|_| Error::EncryptError)?;
-
-        // Increment the client nonce counter for the next message
-        hs.client_nonce_counter += 1;
-        Ok(())
-    }
-}
-
-// This uses the construction from section 5.3 or RFC 8446
-//
-// XOR the IV with the big-endian counter 0 padded to the left.
-//
-// The IV is 12 bytes (96 bits)
-fn chacha20poly1305nonce(iv: &[u8], counter: u64) -> chacha20poly1305::Nonce {
-    let mut nonce = [0u8; NONCE_LEN];
-    nonce[4..].copy_from_slice(&counter.to_be_bytes());
-    nonce
-        .iter_mut()
-        .zip(iv.iter())
-        .for_each(|(x1, x2)| *x1 ^= *x2);
-    *chacha20poly1305::Nonce::from_slice(&nonce)
 }
 
 pub struct DalekVerifier;
