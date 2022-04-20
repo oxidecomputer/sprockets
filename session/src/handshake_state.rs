@@ -279,8 +279,8 @@ mod tests {
 
     impl Eq for HandshakeState {}
 
-    #[test]
-    fn sanity_check() {
+    // Return a HandshakeState for a client and server
+    fn handshake_states() -> (HandshakeState, HandshakeState) {
         let client_secret = EphemeralSecret::new(OsRng);
         let client_public_key = PublicKey::from(&client_secret);
         let server_secret = EphemeralSecret::new(OsRng);
@@ -290,6 +290,14 @@ mod tests {
         let hs1 = HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
         let hs2 = HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
 
+        (hs1, hs2)
+    }
+
+    #[test]
+    fn sanity_check() {
+        let (hs1, hs2) = handshake_states();
+        // We are just testing keys here, not whether the state is for a client
+        // or server. See PartialEq impl above.
         assert_eq!(hs1, hs2);
 
         // Ensure all keys are different
@@ -303,17 +311,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let client_secret = EphemeralSecret::new(OsRng);
-        let client_public_key = PublicKey::from(&client_secret);
-        let server_secret = EphemeralSecret::new(OsRng);
-        let server_public_key = PublicKey::from(&server_secret);
-        let transcript = [0u8; 32];
-
-        let mut hs1 =
-            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
-        let mut hs2 =
-            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
-
+        let (mut hs1, mut hs2) = handshake_states();
         let mut buf = Vec::new();
         buf.resize_default(buf.capacity()).unwrap();
         let msg = HandshakeMsgV1 {
@@ -337,17 +335,7 @@ mod tests {
 
     #[test]
     fn double_encrypt_same_message_gives_diff_ciphertexts() {
-        let client_secret = EphemeralSecret::new(OsRng);
-        let client_public_key = PublicKey::from(&client_secret);
-        let server_secret = EphemeralSecret::new(OsRng);
-        let server_public_key = PublicKey::from(&server_secret);
-        let transcript = [0u8; 32];
-
-        let mut hs1 =
-            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
-        let mut hs2 =
-            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
-
+        let (mut hs1, mut hs2) = handshake_states();
         let mut buf1 = Vec::new();
         buf1.resize_default(buf1.capacity()).unwrap();
         let mut buf2 = Vec::new();
@@ -376,16 +364,7 @@ mod tests {
     #[test]
     // The nonce gets bumped so any replayed message will not decrypt
     fn ensure_replay_decryption_fails() {
-        let client_secret = EphemeralSecret::new(OsRng);
-        let client_public_key = PublicKey::from(&client_secret);
-        let server_secret = EphemeralSecret::new(OsRng);
-        let server_public_key = PublicKey::from(&server_secret);
-        let transcript = [0u8; 32];
-
-        let mut hs1 =
-            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
-        let mut hs2 =
-            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
+        let (mut hs1, mut hs2) = handshake_states();
 
         let mut buf = Vec::new();
         buf.resize_default(buf.capacity()).unwrap();
