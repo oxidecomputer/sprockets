@@ -363,17 +363,48 @@ mod tests {
         hs1.serialize_and_encrypt(msg, &mut buf2).unwrap();
         assert_ne!(buf1, buf2);
 
-        buf1.resize_default(buf1.capacity()).unwrap();
-        buf2.resize_default(buf2.capacity()).unwrap();
         hs2.serialize_and_encrypt(msg, &mut buf1).unwrap();
         hs2.serialize_and_encrypt(msg, &mut buf2).unwrap();
         assert_ne!(buf1, buf2);
 
         // Sanity check that encryption is different on both sides
-        buf1.resize_default(buf1.capacity()).unwrap();
-        buf2.resize_default(buf2.capacity()).unwrap();
         hs1.serialize_and_encrypt(msg, &mut buf1).unwrap();
         hs2.serialize_and_encrypt(msg, &mut buf2).unwrap();
         assert_ne!(buf1, buf2);
+    }
+
+    #[test]
+    // The nonce gets bumped so any replayed message will not decrypt
+    fn ensure_replay_decryption_fails() {
+        let client_secret = EphemeralSecret::new(OsRng);
+        let client_public_key = PublicKey::from(&client_secret);
+        let server_secret = EphemeralSecret::new(OsRng);
+        let server_public_key = PublicKey::from(&server_secret);
+        let transcript = [0u8; 32];
+
+        let mut hs1 =
+            HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
+        let mut hs2 =
+            HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
+
+        let mut buf = Vec::new();
+        buf.resize_default(buf.capacity()).unwrap();
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::IdentityVerify(IdentityVerify {
+                transcript_signature: Ed25519Signature([9u8; 64]),
+            }),
+        };
+
+        hs1.serialize_and_encrypt(msg, &mut buf).unwrap();
+        let data = hs2.decrypt_and_deserialize(&mut buf).unwrap();
+        assert_eq!(msg.data, data);
+
+        // We can't decrypt the same message twice, as we already changed the
+        // expected nonce.
+        assert_eq!(
+            Err(Error::DecryptError),
+            hs2.decrypt_and_deserialize(&mut buf)
+        );
     }
 }
