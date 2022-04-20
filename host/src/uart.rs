@@ -38,7 +38,9 @@ pub enum RecvError {
     #[error("hubpack deserialization error: {0}")]
     Hubpack(#[from] hubpack::error::Error),
     #[error("serial port read error: {0}")]
-    SerialPort(#[from] std::io::Error),
+    SerialPortIoError(#[from] std::io::Error),
+    #[error("serial port attach error: {0}")]
+    SerialPortAttachError(#[from] serialport::Error),
     #[error("message exceeds maximum COBS encoded size")]
     MsgTooLarge,
     #[error("message is not COBS encoded: {0}")]
@@ -50,11 +52,7 @@ impl Uart {
     pub fn attach(device_path: &str, baud_rate: u32) -> Result<Uart, AttachError> {
         let inner = serialport::new(device_path, baud_rate)
             .timeout(Duration::from_secs(3))
-            .open()
-            .map_err(|_| AttachError::DoesNotExist)?;
-
-        // TODO: Is this needed?
-        inner.clear(serialport::ClearBuffer::All)?;
+            .open()?;
 
         Ok(Uart { inner })
     }
