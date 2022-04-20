@@ -77,6 +77,7 @@ impl HandshakeState {
         let shared_secret = my_secret.diffie_hellman(peer_public_key);
         let handshake_secret = Hkdf::<Sha3_256>::new(Some(&initial_salt), shared_secret.as_bytes());
 
+        // Generate client handshake secret PRK
         let mut client_handshake_secret_buf = Zeroizing::new([0u8; KEY_LEN]);
         handshake_secret
             .expand_multi_info(
@@ -85,11 +86,21 @@ impl HandshakeState {
             )
             .unwrap();
 
+        // Generate server handshake secret PRK
         let mut server_handshake_secret_buf = Zeroizing::new([0u8; KEY_LEN]);
         handshake_secret
             .expand_multi_info(
                 &[&digest_len_buf()[..], b"spr1 s hs", transcript],
                 server_handshake_secret_buf.as_mut(),
+            )
+            .unwrap();
+
+        // Generate application salt
+        let mut application_salt = Zeroizing::new([0u8; DIGEST_LEN]);
+        handshake_secret
+            .expand_multi_info(
+                &[&digest_len_buf()[..], b"spr1 derived"],
+                application_salt.as_mut(),
             )
             .unwrap();
 
@@ -106,29 +117,34 @@ impl HandshakeState {
         let mut client_iv = Zeroizing::new([0u8; NONCE_LEN]);
         let mut server_iv = Zeroizing::new([0u8; NONCE_LEN]);
 
+        // Create client key
         client_handshake_secret
             .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], client_key.as_mut())
             .unwrap();
 
+        // Create server key
         server_handshake_secret
             .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], server_key.as_mut())
             .unwrap();
 
+        // Create client IV
         client_handshake_secret
             .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], client_iv.as_mut())
             .unwrap();
 
+        // Create server IV
         server_handshake_secret
             .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], server_iv.as_mut())
             .unwrap();
 
+        // Initialize AEAD algorithms for client and server
         let client_aead = ChaCha20Poly1305::new(Key::from_slice(client_key.as_ref()));
         let server_aead = ChaCha20Poly1305::new(Key::from_slice(server_key.as_ref()));
 
-        // Generate Finished keys
         let mut client_finished_key = Zeroizing::new([0u8; KEY_LEN]);
         let mut server_finished_key = Zeroizing::new([0u8; KEY_LEN]);
 
+        // Create client_finished_key
         client_handshake_secret
             .expand_multi_info(
                 &[&digest_len_buf()[..], b"spr1 finished"],
@@ -136,19 +152,11 @@ impl HandshakeState {
             )
             .unwrap();
 
+        // Create server_finished_key
         server_handshake_secret
             .expand_multi_info(
                 &[&digest_len_buf()[..], b"spr1 finished"],
                 server_finished_key.as_mut(),
-            )
-            .unwrap();
-
-        // Generate application salt
-        let mut application_salt = Zeroizing::new([0u8; DIGEST_LEN]);
-        handshake_secret
-            .expand_multi_info(
-                &[&digest_len_buf()[..], b"spr1 derived"],
-                application_salt.as_mut(),
             )
             .unwrap();
 
