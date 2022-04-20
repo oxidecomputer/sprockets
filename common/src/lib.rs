@@ -18,6 +18,8 @@ pub mod certificates;
 pub mod measurements;
 pub mod msgs;
 
+pub use measurements::Measurements;
+
 // Macro must be invoked to provide big array support for serde
 big_array! { BigArray; }
 
