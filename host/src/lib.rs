@@ -1,10 +1,14 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
-use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature};
-use sprockets_common::measurements::{HostMeasurements, Measurements};
-use sprockets_common::Nonce;
+mod uart;
+
+pub use uart::Uart;
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///

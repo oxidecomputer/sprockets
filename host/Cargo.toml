@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sprockets-common = { path = "../common" }
+sprockets-common = { path = "../common", features = ["rand"]}
 ring = "0.16.20"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 derive_more = "0.99.17"
 serde = { version = "1.0.136", features = ["derive"]  }
 serde-big-array = { version = "0.3.2" }
+serialport = "4.0.1"
+clap = { version = "3.1", features = ["derive"] }
+corncobs = { version = "0.1.1", features = ["std"] }
+thiserror = "1.0.30"
+anyhow = "1.0.56"
+
+[[bin]]
+name = "sprockets-cli"
