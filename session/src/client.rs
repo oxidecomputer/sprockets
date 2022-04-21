@@ -15,7 +15,7 @@ use crate::msgs::{
     ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
     IdentityVerify,
 };
-use crate::{Error, Role, Session, Vec};
+use crate::{CompletionToken, Error, RecvToken, Role, SendToken, Session, UserAction, Vec};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
@@ -25,7 +25,7 @@ use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 // Each state has different data associated with it.
 //
 // The states are transitioned in the order listed. No state is ever skipped.
-pub enum State {
+enum State {
     Hello {
         client_nonce: Nonce,
         secret: EphemeralSecret,
@@ -68,6 +68,7 @@ pub enum State {
     },
 }
 
+/// The client side of a secure session handshake
 pub struct ClientHandshake {
     manufacturing_public_key: Ed25519PublicKey,
     client_certs: Ed25519Certificates,
@@ -75,58 +76,6 @@ pub struct ClientHandshake {
     // Must be an option to allow moving out of the type when switching between
     // states.
     state: Option<State>,
-}
-
-/// A token that allows calling the `handle` method of a `ClientHandshake`
-#[derive(Debug)]
-pub struct RecvToken(usize);
-
-impl RecvToken {
-    fn new() -> RecvToken {
-        RecvToken(0)
-    }
-}
-
-/// A token that allows calling the `next_msg` method of a `ClientHandshake`
-#[derive(Debug)]
-pub struct SendToken(usize);
-
-impl SendToken {
-    fn new() -> SendToken {
-        SendToken(0)
-    }
-}
-
-/// A token that allows calling the `new_session` method of a `ClientHandshake`
-#[derive(Debug)]
-pub struct CompletionToken(usize);
-
-impl CompletionToken {
-    fn new() -> CompletionToken {
-        CompletionToken(0)
-    }
-}
-
-/// This is the return value from a Client operation. It instructs the user what
-/// to do next.
-#[derive(Debug, From)]
-pub enum UserAction {
-    /// The user should receive a message over the transport and then call
-    /// `handle`.
-    Recv(RecvToken),
-
-    /// The user should call the `next_msg` method to provide a message to be
-    /// sent over the transport.
-    Send(SendToken),
-
-    /// The user should send the included `RotRequest` to the RoT and then call
-    /// `handle_rot_result` with the reply received from the RoT.
-    SendToRot(RotOp),
-
-    /// The handshake is complete and the user should call the `new_session`
-    /// method to get back a `Session` object that can be used to encrypt
-    /// application messages to send and decrypt received application messages.
-    Complete(CompletionToken),
 }
 
 impl ClientHandshake {
@@ -175,8 +124,8 @@ impl ClientHandshake {
 
     /// Handle a message from the server
     ///
-    /// We take a mutable buffer, because we decrypt in place to prevent the
-    // need to allocate.
+    /// We take a mutable buffer because we decrypt in place to prevent the
+    /// need to allocate.
     pub fn handle(&mut self, buf: &mut Vec, _token: RecvToken) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {

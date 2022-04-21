@@ -204,7 +204,7 @@ impl HandshakeState {
     //
     // XOR the IV with the big-endian counter 0 padded to the left.
     //
-    // The IV is 12 bytes (96 bits)cc
+    // The IV is 12 bytes (96 bits)
     fn chacha20poly1305nonce(&mut self, sender_role: Role) -> chacha20poly1305::Nonce {
         let (iv, counter) = match sender_role {
             Role::Client => (&self.client_iv, &mut self.client_nonce_counter),

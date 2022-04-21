@@ -6,16 +6,20 @@
 #![cfg_attr(not(test), no_std)]
 
 use chacha20poly1305::aead::heapless;
+use derive_more::From;
 pub use hubpack::{deserialize, serialize, SerializedSize};
+use sprockets_common::msgs::RotOp;
 
 mod client;
-pub use client::ClientHandshake;
 mod error;
 mod handshake_state;
 mod msgs;
+mod server;
 mod session;
 
+pub use client::ClientHandshake;
 pub use error::Error;
+pub use server::ServerHandshake;
 pub use session::Session;
 
 use crate::msgs::HandshakeMsgV1;
@@ -70,4 +74,56 @@ pub(crate) fn digest_len_buf() -> [u8; ENCODED_LEN] {
 pub(crate) fn nonce_len_buf() -> [u8; ENCODED_LEN] {
     let nonce_len = u16::try_from(NONCE_LEN).unwrap();
     nonce_len.to_be_bytes()
+}
+
+/// A token that allows calling the `handle` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct RecvToken(usize);
+
+impl RecvToken {
+    fn new() -> RecvToken {
+        RecvToken(0)
+    }
+}
+
+/// A token that allows calling the `next_msg` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct SendToken(usize);
+
+impl SendToken {
+    fn new() -> SendToken {
+        SendToken(0)
+    }
+}
+
+/// A token that allows calling the `new_session` method of a `ClientHandshake`
+#[derive(Debug)]
+pub struct CompletionToken(usize);
+
+impl CompletionToken {
+    fn new() -> CompletionToken {
+        CompletionToken(0)
+    }
+}
+
+/// This is the return value from a Client operation. It instructs the user what
+/// to do next.
+#[derive(Debug, From)]
+pub enum UserAction {
+    /// The user should receive a message over the transport and then call
+    /// `handle`.
+    Recv(RecvToken),
+
+    /// The user should call the `next_msg` method to provide a message to be
+    /// sent over the transport.
+    Send(SendToken),
+
+    /// The user should send the included `RotRequest` to the RoT and then call
+    /// `handle_rot_result` with the reply received from the RoT.
+    SendToRot(RotOp),
+
+    /// The handshake is complete and the user should call the `new_session`
+    /// method to get back a `Session` object that can be used to encrypt
+    /// application messages to send and decrypt received application messages.
+    Complete(CompletionToken),
 }
