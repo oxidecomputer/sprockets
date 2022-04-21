@@ -19,7 +19,7 @@ use crate::msgs::{
 use crate::{Error, Vec};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
-use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
+use sprockets_common::{Ed25519PublicKey, Hmac as HmacBuf, Measurements, Nonce, Sha3_256Digest};
 
 // The current state of the handshake state machine
 //
@@ -240,6 +240,9 @@ impl Client {
                 signature,
                 handshake_state,
             } => self.create_identity_verify_msg(signature, handshake_state, buf),
+            State::SendFinished { handshake_state } => {
+                self.create_finished_msg(handshake_state, buf)
+            }
             _ => unimplemented!(),
         }
     }
@@ -340,6 +343,41 @@ impl Client {
         });
 
         Ok(SendToken::new().into())
+    }
+
+    fn create_finished_msg(
+        &mut self,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        // We clone so we can use the intermediate hash value but maintain
+        // the running hash computation.
+        //
+        // The current transcript hash is:
+        //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
+        //      || Finished(S) || Identity(C) ||  IdentityVerify(C) )
+        //
+        let transcript_hash = self.transcript.clone().finalize();
+
+        // Create a MAC over the transcript hash
+        let mut mac = Hmac::<Sha3_256>::new_from_slice(hs.server_finished_key.as_ref()).unwrap();
+        mac.update(&transcript_hash);
+        let mac = HmacBuf(mac.finalize().into_bytes().into());
+
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::Finished(Finished { mac }),
+        };
+        HandshakeState::serialize(msg, buf)?;
+        self.transcript.update(&buf);
+        hs.encrypt(buf)?;
+
+        // Transition to the next state
+        self.state = Some(State::Complete {
+            handshake_state: hs,
+        });
+
+        Ok(CompletionToken::new().into())
     }
 
     fn handle_hello(
