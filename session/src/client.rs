@@ -360,7 +360,7 @@ impl Client {
         let transcript_hash = self.transcript.clone().finalize();
 
         // Create a MAC over the transcript hash
-        let mut mac = Hmac::<Sha3_256>::new_from_slice(hs.server_finished_key.as_ref()).unwrap();
+        let mut mac = Hmac::<Sha3_256>::new_from_slice(hs.client_finished_key.as_ref()).unwrap();
         mac.update(&transcript_hash);
         let mac = HmacBuf(mac.finalize().into_bytes().into());
 
