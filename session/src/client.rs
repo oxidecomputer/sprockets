@@ -16,7 +16,7 @@ use crate::msgs::{ClientHello, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVers
 use crate::{Error, Vec};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
-use sprockets_common::{Ed25519PublicKey, Measurements, Nonce};
+use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
 // The current state of the handshake state machine
 //
@@ -55,6 +55,7 @@ pub enum State {
         handshake_state: HandshakeState,
     },
     SendIdentityVerify {
+        signature: Ed25519Signature,
         handshake_state: HandshakeState,
     },
     SendFinished {
@@ -213,7 +214,10 @@ impl Client {
                 server_nonce,
                 handshake_state,
             } => self.handle_signed_measurements(server_nonce, handshake_state, result),
-            _ => unimplemented!(),
+            State::WaitForSignedTranscriptFromRoT { handshake_state } => {
+                self.handle_signed_transcript(handshake_state, result)
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -255,6 +259,23 @@ impl Client {
         }
     }
 
+    fn handle_signed_transcript(
+        &mut self,
+        hs: HandshakeState,
+        result: RotResult,
+    ) -> Result<UserAction, Error> {
+        if let RotResult::SignedTranscript(signature) = result {
+            // Transition to the next state
+            self.state = Some(State::SendIdentityVerify {
+                signature,
+                handshake_state: hs,
+            });
+            Ok(SendToken::new().into())
+        } else {
+            Err(Error::UnexpecteRotMsg)
+        }
+    }
+
     fn create_identity_msg(
         &mut self,
         measurements: Measurements,
@@ -270,8 +291,24 @@ impl Client {
                 measurements_sig,
             }),
         };
-        hs.serialize_and_encrypt(msg, buf)?;
-        Ok(SendToken::new().into())
+        HandshakeState::serialize(msg, buf)?;
+        self.transcript.update(&buf);
+        hs.encrypt(buf)?;
+
+        // Transition to the next state
+        self.state = Some(State::WaitForSignedTranscriptFromRoT {
+            handshake_state: hs,
+        });
+
+        // We clone so we can use the intermediate hash value but maintain
+        // the running hash computation.
+        //
+        // The current transcript hash is:
+        //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
+        //      || Finished(S) || Identity(C) )
+        //
+        let hash = Sha3_256Digest(self.transcript.clone().finalize().into());
+        Ok(RotOp::SignTranscript(hash).into())
     }
 
     fn handle_hello(

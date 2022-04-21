@@ -148,6 +148,10 @@ impl RotSprocket {
                 let sig = Ed25519Signature(sig.to_bytes());
                 RotResult::Measurements(self.measurements.clone(), nonce, sig)
             }
+            RotOp::SignTranscript(transcript_hash) => {
+                let sig = self.dhe_keypair.sign(&transcript_hash.0);
+                RotResult::SignedTranscript(Ed25519Signature(sig.to_bytes()))
+            }
         };
         Ok(RotResponse::V1 { id, result })
     }

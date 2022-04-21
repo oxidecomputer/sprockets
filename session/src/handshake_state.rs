@@ -174,14 +174,14 @@ impl HandshakeState {
         }
     }
 
-    pub fn serialize_and_encrypt(
-        &mut self,
-        msg: HandshakeMsgV1,
-        buf: &mut Vec,
-    ) -> Result<(), Error> {
-        let nonce = self.chacha20poly1305nonce(self.role);
+    pub fn serialize(msg: HandshakeMsgV1, buf: &mut Vec) -> Result<(), Error> {
         let size = serialize(buf, &msg)?;
         buf.truncate(size);
+        Ok(())
+    }
+
+    pub fn encrypt(&mut self, buf: &mut Vec) -> Result<(), Error> {
+        let nonce = self.chacha20poly1305nonce(self.role);
         let aead = match self.role {
             Role::Client => &mut self.client_aead,
             Role::Server => &mut self.server_aead,
@@ -286,6 +286,17 @@ mod tests {
     }
 
     impl Eq for HandshakeState {}
+
+    impl HandshakeState {
+        pub fn serialize_and_encrypt(
+            &mut self,
+            msg: HandshakeMsgV1,
+            buf: &mut Vec,
+        ) -> Result<(), Error> {
+            Self::serialize(msg, buf)?;
+            self.encrypt(buf)
+        }
+    }
 
     // Return a HandshakeState for a client and server
     fn handshake_states() -> (HandshakeState, HandshakeState) {
