@@ -12,7 +12,10 @@ use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::handshake_state::{validate_version, HandshakeState, Role};
-use crate::msgs::{ClientHello, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity};
+use crate::msgs::{
+    ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
+    IdentityVerify,
+};
 use crate::{Error, Vec};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
@@ -233,6 +236,10 @@ impl Client {
                 signature,
                 handshake_state,
             } => self.create_identity_msg(measurements, signature, handshake_state, buf),
+            State::SendIdentityVerify {
+                signature,
+                handshake_state,
+            } => self.create_identity_verify_msg(signature, handshake_state, buf),
             _ => unimplemented!(),
         }
     }
@@ -309,6 +316,30 @@ impl Client {
         //
         let hash = Sha3_256Digest(self.transcript.clone().finalize().into());
         Ok(RotOp::SignTranscript(hash).into())
+    }
+
+    fn create_identity_verify_msg(
+        &mut self,
+        transcript_signature: Ed25519Signature,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::IdentityVerify(IdentityVerify {
+                transcript_signature,
+            }),
+        };
+        HandshakeState::serialize(msg, buf)?;
+        self.transcript.update(&buf);
+        hs.encrypt(buf)?;
+
+        // Transition to the next state
+        self.state = Some(State::SendFinished {
+            handshake_state: hs,
+        });
+
+        Ok(SendToken::new().into())
     }
 
     fn handle_hello(
