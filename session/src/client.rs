@@ -5,21 +5,20 @@
 use derive_more::From;
 use ed25519;
 use ed25519_dalek;
-use hmac::{Hmac, Mac};
 use hubpack::{deserialize, serialize};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::handshake_state::{validate_version, HandshakeState, Role};
+use crate::handshake_state::{validate_version, HandshakeState};
 use crate::msgs::{
     ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
     IdentityVerify,
 };
-use crate::{Error, Vec};
+use crate::{Error, Role, Session, Vec};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
-use sprockets_common::{Ed25519PublicKey, Hmac as HmacBuf, Measurements, Nonce, Sha3_256Digest};
+use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
 // The current state of the handshake state machine
 //
@@ -69,7 +68,7 @@ pub enum State {
     },
 }
 
-pub struct Client {
+pub struct ClientHandshake {
     manufacturing_public_key: Ed25519PublicKey,
     client_certs: Ed25519Certificates,
     transcript: Sha3_256,
@@ -130,17 +129,18 @@ pub enum UserAction {
     Complete(CompletionToken),
 }
 
-impl Client {
-    /// Initialize the Client and serialize the ClientHello message into `buf`.
+impl ClientHandshake {
+    /// Initialize the ClientHandshake and serialize the ClientHello message
+    /// into `buf`.
     ///
-    /// Return the Client and the size of the serialize message.
+    /// Return the ClientHandshake and the size of the serialized message.
     ///
     /// `buf` must be at least `HandshakeMsgV1::MAX_SIZE` bytes;
     pub fn init(
         manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
         buf: &mut [u8],
-    ) -> (Client, usize, RecvToken) {
+    ) -> (ClientHandshake, usize, RecvToken) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
 
@@ -163,7 +163,7 @@ impl Client {
         let size = serialize(buf, &msg).unwrap();
         transcript.update(&buf[..size]);
 
-        let client = Client {
+        let client = ClientHandshake {
             manufacturing_public_key,
             client_certs,
             transcript,
@@ -243,8 +243,21 @@ impl Client {
             State::SendFinished { handshake_state } => {
                 self.create_finished_msg(handshake_state, buf)
             }
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
+    }
+
+    // Return a `Session` that can be used to send and receive application
+    // level messages over an encrypted channel.
+    //
+    // The CompletionToken ensures that the session can only be called after the
+    // handshake completes.
+    pub fn new_session(self, _: CompletionToken) -> Session {
+        let hs = match self.state.unwrap() {
+            State::Complete { handshake_state } => handshake_state,
+            _ => unreachable!(),
+        };
+        Session::new(hs, Sha3_256Digest(self.transcript.finalize().into()))
     }
 
     fn handle_signed_measurements(
@@ -360,9 +373,7 @@ impl Client {
         let transcript_hash = self.transcript.clone().finalize();
 
         // Create a MAC over the transcript hash
-        let mut mac = Hmac::<Sha3_256>::new_from_slice(hs.client_finished_key.as_ref()).unwrap();
-        mac.update(&transcript_hash);
-        let mac = HmacBuf(mac.finalize().into_bytes().into());
+        let mac = hs.create_finished_mac(&transcript_hash);
 
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
@@ -511,11 +522,7 @@ impl Client {
             self.transcript.update(buf);
 
             // Verify the MAC over the transcript hash
-            let mut mac =
-                Hmac::<Sha3_256>::new_from_slice(hs.server_finished_key.as_ref()).unwrap();
-            mac.update(&transcript_hash);
-            mac.verify_slice(&finished.mac.0)
-                .map_err(|_| Error::BadMac)?;
+            hs.verify_finished_mac(&finished.mac.0, &transcript_hash)?;
 
             // Transition to the next state
             self.state = Some(State::WaitForSignedMeasurementsFromRoT {

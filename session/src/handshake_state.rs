@@ -7,67 +7,32 @@
 use chacha20poly1305::aead::{AeadInPlace, NewAead};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key};
 use hkdf::Hkdf;
-use hubpack::{deserialize, serialize, SerializedSize};
+use hmac::{Hmac, Mac};
+use hubpack::{deserialize, serialize};
 use sha3::Sha3_256;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroizing;
 
 use crate::msgs::{HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion};
-use crate::{Error, Vec};
-
-// The length of the nonce for ChaCha20Poly1305
-pub const NONCE_LEN: usize = 12;
-
-// The length of a digest or nonce as a big endian u16
-pub const ENCODED_LEN: usize = 2;
-
-// The length of a SHA3-256 digest
-pub const DIGEST_LEN: usize = 32;
-
-// The length of a ChaCha20Poly1305 Key
-pub const KEY_LEN: usize = 32;
-
-// The length of a ChaCha20Poly1305 authentication tag
-pub const TAG_LEN: usize = 16;
-
-pub const MAX_HANDSHAKE_MSG_SIZE: usize = HandshakeMsgV1::MAX_SIZE + TAG_LEN;
-
-// Is endpoint a client or server
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Role {
-    Client,
-    Server,
-}
-
-impl Role {
-    // Return the role of the peer
-    //
-    // Happy Opposite Day!
-    fn peer(&self) -> Role {
-        match self {
-            Role::Client => Role::Server,
-            Role::Server => Role::Client,
-        }
-    }
-}
+use crate::{digest_len_buf, nonce_len_buf, Error, Role, Vec, DIGEST_LEN, KEY_LEN, NONCE_LEN};
 
 /// Keys, IVs, AEADs used for the handshake traffic
 pub struct HandshakeState {
-    pub role: Role,
-    pub client_aead: ChaCha20Poly1305,
-    pub server_aead: ChaCha20Poly1305,
-    pub application_salt: Zeroizing<[u8; DIGEST_LEN]>,
-    pub client_nonce_counter: u64,
-    pub server_nonce_counter: u64,
-    pub server_iv: Zeroizing<[u8; NONCE_LEN]>,
-    pub client_iv: Zeroizing<[u8; NONCE_LEN]>,
-    pub server_finished_key: Zeroizing<[u8; DIGEST_LEN]>,
-    pub client_finished_key: Zeroizing<[u8; DIGEST_LEN]>,
+    role: Role,
+    client_aead: ChaCha20Poly1305,
+    server_aead: ChaCha20Poly1305,
+    application_salt: Zeroizing<[u8; DIGEST_LEN]>,
+    client_nonce_counter: u64,
+    server_nonce_counter: u64,
+    server_iv: Zeroizing<[u8; NONCE_LEN]>,
+    client_iv: Zeroizing<[u8; NONCE_LEN]>,
+    server_finished_key: Zeroizing<[u8; DIGEST_LEN]>,
+    client_finished_key: Zeroizing<[u8; DIGEST_LEN]>,
 }
 
 impl HandshakeState {
     /// Compute a shared secret via x25519 and derive HandshakeKeys using HKDF
-    pub fn new(
+    pub(crate) fn new(
         role: Role,
         my_secret: EphemeralSecret,
         peer_public_key: &PublicKey,
@@ -207,11 +172,39 @@ impl HandshakeState {
         Ok(msg.data)
     }
 
+    // Verify a MAC over the current transcript hash
+    pub fn verify_finished_mac(
+        &self,
+        finished_mac: &[u8],
+        transcript_hash: &[u8],
+    ) -> Result<(), Error> {
+        // The peer signed the message
+        let finished_key = match self.role {
+            Role::Client => self.server_finished_key.as_ref(),
+            Role::Server => self.client_finished_key.as_ref(),
+        };
+        let mut mac = Hmac::<Sha3_256>::new_from_slice(finished_key).unwrap();
+        mac.update(transcript_hash);
+        mac.verify_slice(finished_mac).map_err(|_| Error::BadMac)
+    }
+
+    /// Create a MAC over the current transcript hash
+    pub fn create_finished_mac(&self, transcript_hash: &[u8]) -> sprockets_common::Hmac {
+        // We signed the message
+        let finished_key = match self.role {
+            Role::Client => self.client_finished_key.as_ref(),
+            Role::Server => self.server_finished_key.as_ref(),
+        };
+        let mut mac = Hmac::<Sha3_256>::new_from_slice(finished_key).unwrap();
+        mac.update(transcript_hash);
+        sprockets_common::Hmac(mac.finalize().into_bytes().into())
+    }
+
     // This uses the construction from section 5.3 or RFC 8446
     //
     // XOR the IV with the big-endian counter 0 padded to the left.
     //
-    // The IV is 12 bytes (96 bits)
+    // The IV is 12 bytes (96 bits)cc
     fn chacha20poly1305nonce(&mut self, sender_role: Role) -> chacha20poly1305::Nonce {
         let (iv, counter) = match sender_role {
             Role::Client => (&self.client_iv, &mut self.client_nonce_counter),
@@ -229,6 +222,14 @@ impl HandshakeState {
 
         *chacha20poly1305::Nonce::from_slice(&nonce)
     }
+
+    pub fn application_salt(&self) -> &[u8] {
+        self.application_salt.as_ref()
+    }
+
+    pub(crate) fn role(&self) -> Role {
+        self.role
+    }
 }
 
 pub fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
@@ -236,19 +237,6 @@ pub fn validate_version(version: &HandshakeVersion) -> Result<(), Error> {
         return Err(Error::BadVersion);
     }
     Ok(())
-}
-// Return a 2-byte big endian encoded buf containing digest size
-fn digest_len_buf() -> [u8; ENCODED_LEN] {
-    let digest_len = u16::try_from(DIGEST_LEN).unwrap();
-    digest_len.to_be_bytes()
-}
-
-// Return a 2 byte big endian encoded buf containing nonce size
-//
-// Note that nonce size = iv size
-fn nonce_len_buf() -> [u8; ENCODED_LEN] {
-    let nonce_len = u16::try_from(NONCE_LEN).unwrap();
-    nonce_len.to_be_bytes()
 }
 
 #[cfg(test)]
