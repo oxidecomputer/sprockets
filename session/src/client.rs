@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use hubpack::{deserialize, serialize};
+use hubpack::deserialize;
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -80,15 +80,15 @@ pub struct ClientHandshake {
 impl ClientHandshake {
     /// Initialize the ClientHandshake and serialize the ClientHello message
     /// into `buf`.
-    ///
+    ///&
     /// Return the ClientHandshake and the size of the serialized message.
     ///
     /// `buf` must be at least `HandshakeMsgV1::MAX_SIZE` bytes;
     pub fn init(
         manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
-        buf: &mut [u8],
-    ) -> (ClientHandshake, usize, RecvToken) {
+        buf: &mut Vec,
+    ) -> (ClientHandshake, RecvToken) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
 
@@ -108,8 +108,8 @@ impl ClientHandshake {
         );
 
         let mut transcript = Sha3_256::new();
-        let size = serialize(buf, &msg).unwrap();
-        transcript.update(&buf[..size]);
+        HandshakeState::serialize(msg, buf).unwrap();
+        transcript.update(&buf);
 
         let client = ClientHandshake {
             manufacturing_public_key,
@@ -118,7 +118,7 @@ impl ClientHandshake {
             state: Some(state),
         };
 
-        (client, size, RecvToken::new())
+        (client, RecvToken::new())
     }
 
     /// Handle a message from the server

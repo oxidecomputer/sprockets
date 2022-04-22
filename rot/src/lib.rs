@@ -60,60 +60,7 @@ impl RotSprocket {
             tcb: Sha3_256Digest(random_buf()),
         });
     }
-}
 
-pub struct RotConfig {
-    pub manufacturing_public_key: Ed25519PublicKey,
-    pub certificates: Ed25519Certificates,
-
-    // TODO: Should we instead use the generic array forms and convert to salty
-    // as needed?
-    pub device_id_keypair: salty::Keypair,
-    pub measurement_keypair: salty::Keypair,
-    pub dhe_keypair: salty::Keypair,
-}
-
-impl RotConfig {
-    // TODO: remove this altogether eventually
-    // Use salty to create the keys and do signing. This allows us to run
-    // the code on the RoT and Host.
-    pub fn bootstrap_for_testing() -> RotConfig {
-        let manufacturing_keypair = salty::Keypair::from(&random_buf());
-        let device_id_keypair = salty::Keypair::from(&random_buf());
-        let measurement_keypair = salty::Keypair::from(&random_buf());
-        let dhe_keypair = salty::Keypair::from(&random_buf());
-        let certificates = Ed25519Certificates::bootstrap_for_testing(
-            &manufacturing_keypair,
-            &device_id_keypair,
-            &measurement_keypair,
-            &dhe_keypair,
-        );
-        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
-
-        RotConfig {
-            manufacturing_public_key,
-            certificates,
-            device_id_keypair,
-            measurement_keypair,
-            dhe_keypair,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RotSprocketError {
-    InvalidSerializedReq,
-    DeserializationBufferTooSmall,
-    Hubpack(hubpack::error::Error),
-}
-
-impl From<hubpack::error::Error> for RotSprocketError {
-    fn from(e: hubpack::error::Error) -> Self {
-        RotSprocketError::Hubpack(e)
-    }
-}
-
-impl RotSprocket {
     /// Handle a serialized request
     pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<usize, RotSprocketError> {
         let (request, _) = deserialize::<RotRequest>(req)?;
@@ -155,6 +102,60 @@ impl RotSprocket {
         };
         Ok(RotResponse::V1 { id, result })
     }
+
+    pub fn get_certificates(&self) -> Ed25519Certificates {
+        self.certificates.clone()
+    }
+}
+
+pub struct RotConfig {
+    pub manufacturing_public_key: Ed25519PublicKey,
+    pub certificates: Ed25519Certificates,
+
+    // TODO: Should we instead use the generic array forms and convert to salty
+    // as needed?
+    pub device_id_keypair: salty::Keypair,
+    pub measurement_keypair: salty::Keypair,
+    pub dhe_keypair: salty::Keypair,
+}
+
+impl RotConfig {
+    // TODO: remove this altogether eventually
+    // Use salty to create the keys and do signing. This allows us to run
+    // the code on the RoT and Host.
+    pub fn bootstrap_for_testing(manufacturing_keypair: &salty::Keypair) -> RotConfig {
+        let device_id_keypair = salty::Keypair::from(&random_buf());
+        let measurement_keypair = salty::Keypair::from(&random_buf());
+        let dhe_keypair = salty::Keypair::from(&random_buf());
+        let certificates = Ed25519Certificates::bootstrap_for_testing(
+            manufacturing_keypair,
+            &device_id_keypair,
+            &measurement_keypair,
+            &dhe_keypair,
+        );
+        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+
+        RotConfig {
+            manufacturing_public_key,
+            certificates,
+            device_id_keypair,
+            measurement_keypair,
+            dhe_keypair,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RotSprocketError {
+    InvalidSerializedReq,
+    DeserializationBufferTooSmall,
+    Hubpack(hubpack::error::Error),
+}
+
+impl From<hubpack::error::Error> for RotSprocketError {
+    fn from(e: hubpack::error::Error) -> Self {
+        RotSprocketError::Hubpack(e)
+    }
 }
 
 #[cfg(test)]
@@ -165,7 +166,8 @@ mod tests {
 
     #[test]
     fn test_get_certificates() {
-        let config = RotConfig::bootstrap_for_testing();
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
         let expected_certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let req = RotRequest::V1 {
@@ -190,7 +192,8 @@ mod tests {
 
     #[test]
     fn test_measurements() {
-        let config = RotConfig::bootstrap_for_testing();
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
         let certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let nonce = Nonce::new();

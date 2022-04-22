@@ -87,15 +87,18 @@ impl ServerHandshake {
     pub fn init(
         manufacturing_public_key: Ed25519PublicKey,
         server_certs: Ed25519Certificates,
-    ) -> ServerHandshake {
+    ) -> (ServerHandshake, RecvToken) {
         let state = Some(State::WaitForHello);
         let transcript = Sha3_256::new();
-        ServerHandshake {
-            manufacturing_public_key,
-            server_certs,
-            transcript,
-            state,
-        }
+        (
+            ServerHandshake {
+                manufacturing_public_key,
+                server_certs,
+                transcript,
+                state,
+            },
+            RecvToken::new(),
+        )
     }
 
     /// Handle a message from the client

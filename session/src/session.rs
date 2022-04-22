@@ -4,14 +4,14 @@
 
 //! Secure Session type
 
-use chacha20poly1305::aead::{AeadInPlace, NewAead};
+use chacha20poly1305::aead::{AeadInPlace, Buffer, NewAead};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key};
 use hkdf::Hkdf;
 use sha3::Sha3_256;
 use zeroize::Zeroizing;
 
 use crate::handshake_state::HandshakeState;
-use crate::{digest_len_buf, nonce_len_buf, Error, Role, Vec, KEY_LEN, NONCE_LEN};
+use crate::{digest_len_buf, nonce_len_buf, Error, Role, KEY_LEN, NONCE_LEN};
 use sprockets_common::Sha3_256Digest;
 
 // A secure session created as a result of a successful handshake
@@ -96,7 +96,7 @@ impl Session {
 
     /// Encrypt an application level plaintext message in place. The buffer must
     /// be large enough to support an authentication tag of 16 bytes.
-    pub fn encrypt(&mut self, buf: &mut Vec) -> Result<(), Error> {
+    pub fn encrypt(&mut self, buf: &mut dyn Buffer) -> Result<(), Error> {
         let nonce = self.chacha20poly1305nonce(self.role);
         let aead = match self.role {
             Role::Client => &mut self.client_aead,
@@ -107,7 +107,7 @@ impl Session {
     }
 
     /// Decrypt buf in place, returning the plaintext in buf
-    pub fn decrypt(&mut self, buf: &mut Vec) -> Result<(), Error> {
+    pub fn decrypt(&mut self, buf: &mut dyn Buffer) -> Result<(), Error> {
         let nonce = self.chacha20poly1305nonce(self.role.peer());
         let aead = match self.role.peer() {
             Role::Client => &mut self.client_aead,
