@@ -200,7 +200,7 @@ impl HandshakeState {
         sprockets_common::Hmac(mac.finalize().into_bytes().into())
     }
 
-    // This uses the construction from section 5.3 or RFC 8446
+    // This uses the construction from section 5.3 of RFC 8446
     //
     // XOR the IV with the big-endian counter 0 padded to the left.
     //

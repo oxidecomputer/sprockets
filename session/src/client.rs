@@ -80,10 +80,8 @@ pub struct ClientHandshake {
 impl ClientHandshake {
     /// Initialize the ClientHandshake and serialize the ClientHello message
     /// into `buf`.
-    ///&
-    /// Return the ClientHandshake and the size of the serialized message.
     ///
-    /// `buf` must be at least `HandshakeMsgV1::MAX_SIZE` bytes;
+    /// Return the ClientHandshake along with a RecvToken.
     pub fn init(
         manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
