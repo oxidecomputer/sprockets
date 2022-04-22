@@ -7,8 +7,12 @@
 
 use chacha20poly1305::aead::heapless;
 use derive_more::From;
+use ed25519;
+use ed25519_dalek;
 pub use hubpack::{deserialize, serialize, SerializedSize};
+use sprockets_common::certificates::Ed25519Verifier;
 use sprockets_common::msgs::RotOp;
+use sprockets_common::{Ed25519PublicKey, Ed25519Signature};
 
 mod client;
 mod error;
@@ -126,4 +130,20 @@ pub enum UserAction {
     /// method to get back a `Session` object that can be used to encrypt
     /// application messages to send and decrypt received application messages.
     Complete(CompletionToken),
+}
+
+pub(crate) struct DalekVerifier;
+
+impl Ed25519Verifier for DalekVerifier {
+    fn verify(
+        &self,
+        signer_public_key: &Ed25519PublicKey,
+        msg: &[u8],
+        signature: &Ed25519Signature,
+    ) -> Result<(), ()> {
+        let public_key = ed25519_dalek::PublicKey::from_bytes(&signer_public_key.0).unwrap();
+        let signature = ed25519::Signature::from_bytes(&signature.0).unwrap();
+        public_key.verify_strict(msg, &signature).map_err(|_| ())?;
+        Ok(())
+    }
 }

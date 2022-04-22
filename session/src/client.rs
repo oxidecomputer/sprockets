@@ -2,9 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use derive_more::From;
-use ed25519;
-use ed25519_dalek;
 use hubpack::{deserialize, serialize};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
@@ -15,7 +12,9 @@ use crate::msgs::{
     ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
     IdentityVerify,
 };
-use crate::{CompletionToken, Error, RecvToken, Role, SendToken, Session, UserAction, Vec};
+use crate::{
+    CompletionToken, DalekVerifier, Error, RecvToken, Role, SendToken, Session, UserAction, Vec,
+};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
@@ -277,7 +276,7 @@ impl ClientHandshake {
         //
         // The current transcript hash is:
         //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
-        //      || Finished(S) || Identity(C) )
+        //      || Finished(S) || Identity(C))
         //
         let hash = Sha3_256Digest(self.transcript.clone().finalize().into());
         Ok(RotOp::SignTranscript(hash).into())
@@ -317,7 +316,7 @@ impl ClientHandshake {
         //
         // The current transcript hash is:
         //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
-        //      || Finished(S) || Identity(C) ||  IdentityVerify(C) )
+        //      || Finished(S) || Identity(C) ||  IdentityVerify(C))
         //
         let transcript_hash = self.transcript.clone().finalize();
 
@@ -483,21 +482,5 @@ impl ClientHandshake {
         } else {
             Err(Error::UnexpectedMsg)
         }
-    }
-}
-
-pub struct DalekVerifier;
-
-impl Ed25519Verifier for DalekVerifier {
-    fn verify(
-        &self,
-        signer_public_key: &Ed25519PublicKey,
-        msg: &[u8],
-        signature: &Ed25519Signature,
-    ) -> Result<(), ()> {
-        let public_key = ed25519_dalek::PublicKey::from_bytes(&signer_public_key.0).unwrap();
-        let signature = ed25519::Signature::from_bytes(&signature.0).unwrap();
-        public_key.verify_strict(msg, &signature).map_err(|_| ())?;
-        Ok(())
     }
 }

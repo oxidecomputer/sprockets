@@ -2,9 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-use derive_more::From;
-use ed25519;
-use ed25519_dalek;
 use hubpack::{deserialize, serialize};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
@@ -15,12 +12,14 @@ use crate::msgs::{
     ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
     IdentityVerify, ServerHello,
 };
-use crate::{CompletionToken, Error, RecvToken, Role, SendToken, Session, UserAction, Vec};
+use crate::{
+    CompletionToken, DalekVerifier, Error, RecvToken, Role, SendToken, Session, UserAction, Vec,
+};
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
-// The current state of the handshake state machine
+// The current state of the server handshake state machine
 //
 // Each state has different data associated with it.
 //
@@ -59,7 +58,7 @@ enum State {
         handshake_state: HandshakeState,
     },
     WaitForIdentityVerify {
-        server_identity: Identity,
+        client_identity: Identity,
         handshake_state: HandshakeState,
     },
     WaitForFinished {
@@ -107,7 +106,18 @@ impl ServerHandshake {
         let state = self.state.take().unwrap();
         match state {
             State::WaitForHello => self.handle_hello(buf),
-            _ => unimplemented!(),
+            State::WaitForIdentity {
+                server_nonce,
+                handshake_state,
+            } => self.handle_identity(server_nonce, handshake_state, buf),
+            State::WaitForIdentityVerify {
+                client_identity,
+                handshake_state,
+            } => self.handle_identity_verify(client_identity, handshake_state, buf),
+            State::WaitForFinished { handshake_state } => {
+                self.handle_finished(handshake_state, buf)
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -136,7 +146,11 @@ impl ServerHandshake {
                 signature,
                 handshake_state,
             } => self.create_identity_verify_msg(server_nonce, signature, handshake_state, buf),
-            _ => unimplemented!(),
+            State::SendFinished {
+                server_nonce,
+                handshake_state,
+            } => self.create_finished_msg(server_nonce, handshake_state, buf),
+            _ => unreachable!(),
         }
     }
 
@@ -164,6 +178,19 @@ impl ServerHandshake {
             } => self.handle_signed_transcript(server_nonce, handshake_state, result),
             _ => unreachable!(),
         }
+    }
+
+    // Return a `Session` that can be used to send and receive application
+    // level messages over an encrypted channel.
+    //
+    // The CompletionToken ensures that the session can only be called after the
+    // handshake completes.
+    pub fn new_session(self, _: CompletionToken) -> Session {
+        let hs = match self.state.unwrap() {
+            State::Complete { handshake_state } => handshake_state,
+            _ => unreachable!(),
+        };
+        Session::new(hs, Sha3_256Digest(self.transcript.finalize().into()))
     }
 
     fn handle_hello(&mut self, buf: &mut Vec) -> Result<UserAction, Error> {
@@ -327,5 +354,146 @@ impl ServerHandshake {
         });
 
         Ok(SendToken::new().into())
+    }
+
+    fn create_finished_msg(
+        &mut self,
+        server_nonce: Nonce,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        // We clone so we can use the intermediate hash value but maintain
+        // the running hash computation.
+        //
+        // The current transcript hash is:
+        //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S))
+        //
+        let transcript_hash = self.transcript.clone().finalize();
+
+        // Create a MAC over the transcript hash
+        let mac = hs.create_finished_mac(&transcript_hash);
+
+        let msg = HandshakeMsgV1 {
+            version: HandshakeVersion { version: 1 },
+            data: HandshakeMsgDataV1::Finished(Finished { mac }),
+        };
+        HandshakeState::serialize(msg, buf)?;
+        self.transcript.update(&buf);
+        hs.encrypt(buf)?;
+
+        // Transition to the next state
+        self.state = Some(State::WaitForIdentity {
+            server_nonce,
+            handshake_state: hs,
+        });
+
+        Ok(RecvToken::new().into())
+    }
+
+    // TODO: Add a Corpus to the state and validate measurements
+    fn handle_identity(
+        &mut self,
+        server_nonce: Nonce,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
+        if let HandshakeMsgDataV1::Identity(identity) = msg_data {
+            self.transcript.update(buf);
+
+            // Validate the certificate chains
+            identity
+                .certs
+                .validate(&self.manufacturing_public_key, &DalekVerifier)?;
+
+            // Ensure measurements concatenated with the client nonce are
+            // properly signed.
+            let (buf, size) = identity.measurements.serialize_with_nonce(&server_nonce);
+            DalekVerifier
+                .verify(
+                    &identity.certs.measurement.subject_public_key,
+                    &buf[..size],
+                    &identity.measurements_sig,
+                )
+                .map_err(|_| Error::BadMeasurementsSig)?;
+
+            // Transition to the next state
+            self.state = Some(State::WaitForIdentityVerify {
+                client_identity: identity,
+                handshake_state: hs,
+            });
+
+            Ok(RecvToken::new().into())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
+    }
+
+    fn handle_identity_verify(
+        &mut self,
+        client_identity: Identity,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
+        if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
+            // We clone so we can use the intermediate hash value but maintain
+            // the running hash computation.
+            //
+            // The current transcript hash is:
+            //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
+            //      || Finished(S) || Identity(C))
+            //
+            let transcript_hash = self.transcript.clone().finalize();
+            self.transcript.update(buf);
+
+            // Verify the transcript hash signature
+            DalekVerifier
+                .verify(
+                    &client_identity.certs.dhe.subject_public_key,
+                    &transcript_hash,
+                    &identity_verify.transcript_signature,
+                )
+                .map_err(|_| Error::BadTranscriptSig)?;
+
+            // Transition to the next state
+            self.state = Some(State::WaitForFinished {
+                handshake_state: hs,
+            });
+
+            Ok(RecvToken::new().into())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
+    }
+
+    fn handle_finished(
+        &mut self,
+        mut hs: HandshakeState,
+        buf: &mut Vec,
+    ) -> Result<UserAction, Error> {
+        let msg_data = hs.decrypt_and_deserialize(buf)?;
+        if let HandshakeMsgDataV1::Finished(finished) = msg_data {
+            // We clone so we can use the intermediate hash value but maintain
+            // the running hash computation.
+            //
+            // The current transcript hash is:
+            //   H(ClientHello || ServerHello || Identity(S) || IdentityVerify(S)
+            //      || Finished(S) || Identity(C) ||  IdentityVerify(C))
+            let transcript_hash = self.transcript.clone().finalize();
+            self.transcript.update(buf);
+
+            // Verify the MAC over the transcript hash
+            hs.verify_finished_mac(&finished.mac.0, &transcript_hash)?;
+
+            // Transition to the next state
+            self.state = Some(State::Complete {
+                handshake_state: hs,
+            });
+
+            Ok(CompletionToken::new().into())
+        } else {
+            Err(Error::UnexpectedMsg)
+        }
     }
 }
