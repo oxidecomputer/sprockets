@@ -1,0 +1,133 @@
+A sprockets `session` is a trusted communication mechanism that can be used
+over arbitrary tranports, as long as those transports can provide in order,
+exactly once message delivery. A session provides confidentiality and integrity
+of all messages after a handshake completes which performs mutual identity
+authentication and remote attestation of endpoints. The handshake protocol is
+based heavily on TLS 1.3 as defined in
+https://www.rfc-editor.org/rfc/rfc8446.html[RFC 8446] except for the fact that
+it eschews crypto agility and provides a mechanism for remote
+attestation based on the use of a Root of Trust (RoT) mechanism at each
+endpoint. A sprockets session is designed for use inside an Oxide rack, but is
+generic enough to be used elsewhere as long as the same key and certificate
+structure is used.
+
+== Algorithms
+Sprockets, like https://www.wireguard.com/[WireGuard], makes a single algorithm
+choice for each required cryptographic construct. 
+
+[cols="1,1"] 
+|=== 
+|Construct| Algorithm
+
+|Digital Signatures 
+|Ed25519
+
+|Digests 
+|SHA3-256
+
+|DHE Agreement 
+|x25519
+
+|AEAD 
+|ChaCha20-Poly1305
+
+|Key Derivation 
+|HKDF
+
+|MAC
+|HMAC
+
+|===
+
+== Versioning
+
+While we have provided forward looking algorithm choices, and hope to not
+require upgrade for the forseeable future, it is inevitable that it will be
+required at some point in time. The sprockets protocol includes the version in
+each message, but this is not intended to be the primary mechanism for upgrade.
+Since sprockets is intended for usage in closed systems, we recommend providing
+two communication endpoints during upgrade and then shutting of the endpoint of the old
+version once all systems are upgraded. This works well when the identity keys of
+an endpoint can be updated along with the protocol software. However, this may
+not always be the case. It's possible that some hardware keys cannot be
+upgraded right away. In that case it may be necessary to run both endpoints
+until end of life of the old hardware or provide a mechanism in the upgraded
+protocol for working with the old key type on specific devices. This mechanism
+has not been fully fleshed out yet and remains an open question.
+
+== Code Structure
+
+The primary factor to keep in mind when looking at the session code is that it
+is intended to run in both `async` rust, and in `no_std` rust. To allow this
+dichotomy the handshake code has been structured as enum based state machines,
+with any transport or RoT communication provided outside this library. In other
+words, no I/O is performed by the handshake code itself. The user must drive the
+handshake state machine manually, based on the result of prior operations.
+Handshake specific messages are defined in **src/msgs.rs**. RoT specific
+messages live in the `sprockets-common` crate: **../common/src/msgs**.
+
+The client side of a session starts by initializing a `ClientHandshake`
+(**src/client.rs**), while the server side initializes a `ServerHandshake`
+(**src/server.rs**). Clients always initiate the protocol with a
+`ClientHello` message, and then wait for a `ServerHello` after the user
+sends the message over the transport. Therefore, `ClientHandshake` init takes a
+a mutable buffer to serialize the message into, and returns a `RecvToken`. A
+`RecvToken` allows the user to call the `handle` method after the `ServerHello`
+is recieved. This is a general pattern, to help prevent runtime errors, where a
+specific type of *token* allows calling a specific API method of a
+`ClientHandshake` or `ServerHandshake`. As the first thing a `ServerHandshake`
+does is wait for a `ClientHandshake`, it similarly returns a `RecvToken` from
+its `init` method.
+
+Besides processing received messages with `handle` methods, users at each side of the
+handshake can also use APIs that:
+ * Create new messages to send over the transport with `next_msg`
+ * Handle `RotResult` messages with `handle_rot_reply`,
+ * And complete the session handshake with `new_session`. 
+
+In order to prevent the user from having to understand the full state machine of
+the protocol, and to allow modification to states and messages without changing user code,
+each call to one of the API methods of `ClientHandshake` and `ServerHandshake`
+returns a `UserAction` as shown below. The user is responsible for performing
+the specific action as shown in the comments. This usage is also demonstrated in
+the integration test in `tests/integration_tests.rs`.
+
+[source,rust]
+----
+/// This is the return value from Handshake API methods. It instructs the user what
+/// to do next.
+#[derive(Debug, From)]
+pub enum UserAction {
+    /// The user should receive a message over the transport and then call
+    /// `handle`.
+    Recv(RecvToken),
+
+    /// The user should call the `next_msg` method to provide a message to be
+    /// sent over the transport.
+    Send(SendToken),
+
+    /// The user should send the included `RotRequest` to the RoT and then call
+    /// `handle_rot_result` with the reply received from the RoT.
+    SendToRot(RotOp),
+
+    /// The handshake is complete and the user should call the `new_session`
+    /// method to get back a `Session` object that can be used to encrypt
+    /// application messages to send and decrypt received application messages.
+    Complete(CompletionToken),
+}
+----
+
+All cryptography related to session establishment lives in
+`src/handshake_state.rs`. Once a handshake completes, the user may encrypt and
+decrypt application level messages via the `Session` type in `src/session.rs`.
+
+== Message Format
+
+Sprockets is intended to be capable of running on embedded microcontrollers and
+as such is implemented as a set of `no_std` rust libraries. We would therefore
+like any library we choose to provide compile-time buffer size guarantees and a
+predictable message format. As we are using Rust, we'd also like to simplify our
+lives with serde support. We have therefore chosen to define all messages as
+rust structs and encode them with https://github.com/cbiffle/hubpack[hubpack].
+
+== Handshake Protocol
