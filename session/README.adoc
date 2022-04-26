@@ -422,7 +422,7 @@ Application keys and IVs are also derived in a similar manner in the
 
 === Errors
 
-Most public handshake and Session APIs can return errors. If at any point an
+Most public handshake and session APIs can return errors. If at any point an
 error is returned during the handshake protocol, the handshake **MUST** be
 terminated. The internal state is consumed in this case to simplify
 the control flow across the handshake code. Additionally, the user doesn't have
@@ -430,6 +430,6 @@ any tokens with which to make further API calls. This ensures the user cannot
 transition the code to an insecure state, and also makes the decision of when to
 cleanup after an error crystal clear.
 
-A user can choose to continue with a session after encrypt or decrypt returns an
-error, hoping the problem does not persiste across messages. However, the
-suggestion is to terminate.
+A user can choose to continue with a session after `encrypt` or `decrypt`
+returns an error, hoping the problem does not persiste across messages. However,
+the suggestion is to terminate.
