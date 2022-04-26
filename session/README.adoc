@@ -81,6 +81,7 @@ its `init` method.
 
 Besides processing received messages with `handle` methods, users at each side of the
 handshake can also use APIs that:
+
  * Create new messages to send over the transport with `next_msg`
  * Handle `RotResult` messages with `handle_rot_reply`,
  * And complete the session handshake with `new_session`. 
