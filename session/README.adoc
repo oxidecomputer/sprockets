@@ -154,5 +154,269 @@ not be appropriate for users outside the Oxide ecosystem. However, this format
 is still under active development and is more of a placeholder for the time
 being.
 
-
 == Handshake Protocol
+
+As stated above, the handshake protocol is essentially TLS 1.3 mutual
+authentication minus the optional bits, and with added measurement signatures.
+The goal here was to do build on a trusted protocol, while simplifying
+implementation. 
+
+[mermaid]
+....
+sequenceDiagram
+    autonumber
+    participant rotA as RoT A
+    participant A as Sled Agent A (Client)
+    participant B as Sled Agent B (Server)
+    participant rotB as RoT B
+
+    Note over A,B: Start Handshake (Unencrypted)
+    A->>B: ClientHello
+    B->>A: ServerHello
+    Note over A,B: Continue Handshake (Encrypted)
+    B->>rotB: GetSignedMeasurements(Client Nonce)
+    rotB->>B: SignedMeasurements
+    B->>A: Identity (Certs + Measurements)
+    B->>rotB: SignTranscript(hash)
+    rotB->>B: TranscriptSignature
+    B->>A: IdentityVerify
+    B->>A: Finished
+    Note over A,B: Client Trusts Server
+    A->>rotA: GetSignedMeasurements(Server Nonce)
+    rotA->>A: SignedMeasurements
+    A->>B: Identity (Certs + Measurements)
+    A->>rotA: SignTranscript(hash)
+    rotA->>A: TranscriptSignature
+    A->>B: IdentityVerify
+    A->>B: Finished
+    Note over A,B: Server Trusts Client
+    Note over A,B: Handshake Complete
+    A->>B: Application Request
+    B->>A: Application Response
+....
+
+
+We use ephemeral Diffie-Hellman key agreement using the `x25519` function
+described in https://datatracker.ietf.org/doc/html/rfc7748[rfc7748]. The first
+step at either endpoint then is to generate these ephemeral keypairs, along with
+a unique random 32-byte nonce used for
+session setup.
+
+1. Send `ClientHello {Nonce, x25519PublicKey}` to the server unencrypted.
+2. Send `ServerHello {Nonce, x25519PublicKey}` to the client unencrypted.
++
+At this point each side has enough information to create a shared secret using
+the `x25519` agreement function by performing scalar multiplication on their
+private key and the public key received in the corresponding `Hello` message.
+From this shared secret each side can derive symmetric handshake encryption keys
+and initialization vectors as described in <<_key_schedule>> in order to encrypt
+the rest of the handshake.  All remaining messages are sent encrypted over the
+wire.
+
+3. The server asks for measurements from the RoT signed with the client nonce
+for freshness to thwart replay attacks.
+4. The RoT returns the signed measurements and nonce.
+
+5. The server sends the certificates used as identity that it has retrieved from
+the RoT, along with the measurements signed by the measurements private key
+(Alias key) on the RoT. These certificates are discussed in <<rfd36>> and below
+in <<_key_schedule>>.
++
+[source,rust]
+----
+Identity {
+    device_id_cert: Certificate
+    measurement_cert: Certificate,
+    dhe_cert: Certificate,
+    measurements: Measurements,
+    measurements_sig: Signature
+}
+----
+
+6. The transcript hash of all the serialized messages included in the handshake
+so far is computed by the sled agent.  
++
+
+```
+transcript_hash = Hash(ClientHello || ServerHello || Identity)
+```
++
+The sled agent then asks the RoT to sign this transcript with the DHE private
+key used as the identity of this sled for the purpose of the handshake.
+
+7. The RoT returns the transcript hash signature to the sled agent so that it
+can include it in the IdentityVerify message. 
+
+8. The server sends the `IdentityVerify` message containing the transcript
+hash signature to the client. The purpose of this message is to
+provide explicit proof that the server posesses the private key corresponding to
+the DHE certificate sent in the Identity message and to provide integrity over
+the entire handshake up to this point. Importantly, this does not demonstrate the
+ability to use the DeviceId private key. Therefore, if the DHE key was
+compromised it shouldn't allow a device to impersonate the original device.  The
+DHE key can be regenerated, although we would need a mechanism for revocation.
+
+9. The server calculates a new transcript hash that includes the serialized
+`IdentityVerify` message and computes an HMAC using the `finished` traffic key
+derived from the `server_handshake_traffic_secret` described in
+<<_key_schedule>>. The server then creates a `Finished` message including the
+HMAC and sends it to the client. This serves to provide key confirmation, binds
+the server's identity to the exchanged keys and authenticates the entire
+handshake.
++
+```
+transcript_hash = Hash(ClientHello || ServerHello || Identity || IdentityVerify)
+```
++
+After the Client has received the `Finished` message and authenticated it, it
+fully trusts the server.
+
+The client performs the same operations for steps 10-16 as the server did for
+steps 3-9. When the server has received and authenticated the `Finished` method
+from the client it completely trusts the client and the handshake is finished.
+At this point the application keys can be used to send encrypted application
+level traffic.
+
+
+=== Key Schedule
+
+This section describes the complete set of keys used in the sprockets protocol.
+
+There are 3 long lived `Ed25519` keypairs residing on each RoT. 
+
+The private keys never leave the RoT.
+
+ * DeviceId - Unique identifier for the RoT created from the built in PUF that
+lives for the lifetime of the device.
+ * Alias Key - A key derived from, and certified (signed) by the DeviceId that
+ may be regenerated upon firmware upgrade and that is used only to sign
+ measurements.
+ * DHE Key - A key used for authenticating Diffie-Hellman key exchanges between
+sprockets endpoints at the sled agents. This key, like the Alias Key, is also
+derived from and certified by the DeviceId.
+
+For a session handshake, each side generates an ephemeral Ed25519 key pair
+for Diffie-Hellman key exchange. The `x25519` function is used in an Elliptic
+Curve Diffie-Hellman (ECDH) protocol as described in RFC 7448, in order to
+generate an ephemeral shared secret. The public part of the keypairs are
+exchanged in the `ClientHello` and `ServerHello` messages.
+
+The ephemeral shared secret computed via ECDH using the ephemeral keys is then
+used to generate handshake traffic secrets which themselves are used to derive
+keys and initialization vectors (IVs) for symmetric encryption of the
+remainder of the handshake messages following the `ClientHello` and
+`ServerHello` messsages. The ECDH shared secret is extracted into a `Handshake
+Secret` using `HKDF-Extract`. The `Handshake Secret` is then expanded via
+`HKDF-Expand` into two independent secrets: one for the client handshake traffic
+and one for the server handshake traffic. `HKDF` is defined in <<rfc5869>>.
+
+Expansion of independent secrets and keys is aided via the use of short (fewer
+than 12 bytes) label strings that get concatenated to a context string before
+being fed to `HKDF-Expand`. TLS 1.3 calls the combined concatenation and
+expansion
+functionality `HKDF-Expand-Label`. We use the
+https://docs.rs/hkdf/latest/hkdf/struct.Hkdf.html#method.expand_multi_info[Hkdf::expand_multi_info]
+method to replicate this functionality without requiring extra allocations. The
+first input is always the serialized size of the expected output length in
+bytes. For concision, we don't show this below.
+
+We use the following label strings for the handshake traffic:
+
+* Client handshake traffic - "spr1 c hs"
+* Server handshake traffic - "spr1 s hs"
+
+We use the following label strings for application level traffic:
+
+* Client application traffic - "spr1 c app"
+* Server application traffic - "spr1 s app"
+
+We also derive a `salt` from the handshake secret using `HKDF-Expand` with the
+"spr1 derived" label, and zero-length context. This salt is used along with an
+array of 0 bytes of hash length as the input key material to generate an
+`Application Secret`. From this application secret, we again use
+`Hkdf::expand_multi_info` to derive independent symmetric keys used for
+encrypting client and server application traffic respectively.
+
+To attempt to clarify these derivations we use a modified diagram taken from
+section 7.1 of RFC 8446.  Top down represents the salt used in
+`HKDF-Extract`, while the left side represents the Input Key Material (IKM) to
+`HKDF-Extract`. The secrets output with the `=` sign are then used as the secret
+input (`.` in the diagram) to the `HKDF-Expand` functions to generate keys and
+initialization vectors. We use the notation `H(msgs)` to indicate a hash
+operation, and use this to generate a transcript hash over a given set of
+plaintext messages exchanged so far.
+
+```        
+         Salt = 0
+             |
+             v
+ECDHE -> HKDF-Extract = Handshake Secret
+             |
+             +-----> HKDF-Expand-Label(., "spr1 c hs", H(ClientHello...ServerHello))
+             |                     = client_handshake_traffic_secret
+             |
+             +-----> HKDF-Expand-Label(., "spr1 s hs", H(ClientHello...ServerHello)
+             |                     = server_handshake_traffic_secret
+             |
+             v
+         HKDF-Expand-Info(., "spr1 derived", "", 32) = New Salt
+             |
+             v
+    0 -> HKDF-Extract = Application Secret
+             |
+             +-----> HKDF-Expand-Label(., "spr1 c app", H(ClientHello...client Finished))
+             |                     = client_application_traffic_secret_0
+             |
+             +-----> HKDF-Expand-Label(., "spr1 s app", H(ClientHello...client Finished))
+             |                     = server_application_traffic_secret_0
+             |
+           --+---
+```
+
+Notably absent above are new secrets other than the application level secret
+that can be used to derive other keys such as session resumption. The constructs
+we are using do not require rekeying, and we do not support session resumption.
+If long lived key usage is not desired, the endpoints can simply terminate a
+session and create a new one.
+
+
+==== Key Derivation
+
+We use `Hkdf::expand_multi_info` in order to derive traffic keys from
+traffic secrets in an analagous manner to that described in section 7.3 of
+RFC 8446.
+
+Specifically handshake keys and IVs for a given client or server
+are derived as shown below: 
+
+[source,rust]
+----
+
+// create client key
+client_handshake_secret
+    .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], client_key.as_mut())
+    .unwrap();
+
+// create server key
+server_handshake_secret
+    .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], server_key.as_mut())
+    .unwrap();
+
+// create client iv
+client_handshake_secret
+    .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], client_iv.as_mut())
+    .unwrap();
+
+// create server iv
+server_handshake_secret
+    .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], server_iv.as_mut())
+    .unwrap();
+
+----
+
+The HMAC key used in the `Finished` messages is derived using an analagous
+mechanism but with a different context string: "spr1 finished".
+
+Application keys and IVs are also derived in a similar manner in the
+`Session::new` method.
+
