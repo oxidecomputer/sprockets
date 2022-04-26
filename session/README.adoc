@@ -83,8 +83,8 @@ Besides processing received messages with `handle` methods, users at each side o
 handshake can also use APIs that:
 
  * Create new messages to send over the transport with `next_msg`
- * Handle `RotResult` messages with `handle_rot_reply`,
- * And complete the session handshake with `new_session`. 
+ * Handle `RotResult` messages with `handle_rot_reply`
+ * Complete the session handshake with `new_session`
 
 In order to prevent the user from having to understand the full state machine of
 the protocol, and to allow modification to states and messages without changing user code,
