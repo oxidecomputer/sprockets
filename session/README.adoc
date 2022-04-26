@@ -161,8 +161,7 @@ authentication minus the optional bits, and with added measurement signatures.
 The goal here was to do build on a trusted protocol, while simplifying
 implementation. 
 
-[mermaid]
-....
+```mermaid
 sequenceDiagram
     autonumber
     participant rotA as RoT A
@@ -193,7 +192,7 @@ sequenceDiagram
     Note over A,B: Handshake Complete
     A->>B: Application Request
     B->>A: Application Response
-....
+```
 
 
 We use ephemeral Diffie-Hellman key agreement using the `x25519` function
