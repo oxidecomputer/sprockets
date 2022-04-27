@@ -14,7 +14,10 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroizing;
 
 use crate::msgs::{HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion};
-use crate::{digest_len_buf, nonce_len_buf, Error, Role, Vec, DIGEST_LEN, KEY_LEN, NONCE_LEN};
+use crate::{
+    digest_len_buf, nonce_len_buf, Error, HandshakeMsgVec, Role, DIGEST_LEN, KEY_LEN, NONCE_LEN,
+};
+use sprockets_common::HmacSha3_256;
 
 /// Keys, IVs, AEADs used for the handshake traffic
 pub struct HandshakeState {
@@ -139,13 +142,13 @@ impl HandshakeState {
         }
     }
 
-    pub fn serialize(msg: HandshakeMsgV1, buf: &mut Vec) -> Result<(), Error> {
+    pub fn serialize(msg: HandshakeMsgV1, buf: &mut HandshakeMsgVec) -> Result<(), Error> {
         let size = serialize(buf, &msg)?;
         buf.truncate(size);
         Ok(())
     }
 
-    pub fn encrypt(&mut self, buf: &mut Vec) -> Result<(), Error> {
+    pub fn encrypt(&mut self, buf: &mut HandshakeMsgVec) -> Result<(), Error> {
         let nonce = self.chacha20poly1305nonce(self.role);
         let aead = match self.role {
             Role::Client => &mut self.client_aead,
@@ -158,7 +161,10 @@ impl HandshakeState {
     // 1. Decrypt buf in place returning the plaintext in buf
     // 2. Deserialize the message
     // 3. Validate that the message version is correct
-    pub fn decrypt_and_deserialize(&mut self, buf: &mut Vec) -> Result<HandshakeMsgDataV1, Error> {
+    pub fn decrypt_and_deserialize(
+        &mut self,
+        buf: &mut HandshakeMsgVec,
+    ) -> Result<HandshakeMsgDataV1, Error> {
         let nonce = self.chacha20poly1305nonce(self.role.peer());
         let aead = match self.role.peer() {
             Role::Client => &mut self.client_aead,
@@ -189,7 +195,7 @@ impl HandshakeState {
     }
 
     /// Create a MAC over the current transcript hash
-    pub fn create_finished_mac(&self, transcript_hash: &[u8]) -> sprockets_common::Hmac {
+    pub fn create_finished_mac(&self, transcript_hash: &[u8]) -> HmacSha3_256 {
         // We signed the message
         let finished_key = match self.role {
             Role::Client => self.client_finished_key.as_ref(),
@@ -197,7 +203,7 @@ impl HandshakeState {
         };
         let mut mac = Hmac::<Sha3_256>::new_from_slice(finished_key).unwrap();
         mac.update(transcript_hash);
-        sprockets_common::Hmac(mac.finalize().into_bytes().into())
+        HmacSha3_256(mac.finalize().into_bytes().into())
     }
 
     // This uses the construction from section 5.3 of RFC 8446
@@ -279,7 +285,7 @@ mod tests {
         pub fn serialize_and_encrypt(
             &mut self,
             msg: HandshakeMsgV1,
-            buf: &mut Vec,
+            buf: &mut HandshakeMsgVec,
         ) -> Result<(), Error> {
             Self::serialize(msg, buf)?;
             self.encrypt(buf)
@@ -319,7 +325,7 @@ mod tests {
     #[test]
     fn encrypt_decrypt_roundtrip() {
         let (mut hs1, mut hs2) = handshake_states();
-        let mut buf = Vec::new();
+        let mut buf = HandshakeMsgVec::new();
         buf.resize_default(buf.capacity()).unwrap();
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
@@ -343,9 +349,9 @@ mod tests {
     #[test]
     fn double_encrypt_same_message_gives_diff_ciphertexts() {
         let (mut hs1, mut hs2) = handshake_states();
-        let mut buf1 = Vec::new();
+        let mut buf1 = HandshakeMsgVec::new();
         buf1.resize_default(buf1.capacity()).unwrap();
-        let mut buf2 = Vec::new();
+        let mut buf2 = HandshakeMsgVec::new();
         buf2.resize_default(buf2.capacity()).unwrap();
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
@@ -373,7 +379,7 @@ mod tests {
     fn ensure_replay_decryption_fails() {
         let (mut hs1, mut hs2) = handshake_states();
 
-        let mut buf = Vec::new();
+        let mut buf = HandshakeMsgVec::new();
         buf.resize_default(buf.capacity()).unwrap();
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },

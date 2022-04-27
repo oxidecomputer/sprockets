@@ -10,7 +10,7 @@ pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 use sprockets_common::certificates::Ed25519Certificates;
 use sprockets_common::measurements::Measurements;
-use sprockets_common::{Ed25519PublicKey, Ed25519Signature, Hmac, Nonce};
+use sprockets_common::{Ed25519PublicKey, Ed25519Signature, HmacSha3_256, Nonce};
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///
@@ -99,5 +99,5 @@ pub struct IdentityVerify {
 /// verification of this message, the receiver trusts the sender.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Finished {
-    pub mac: Hmac,
+    pub mac: HmacSha3_256,
 }

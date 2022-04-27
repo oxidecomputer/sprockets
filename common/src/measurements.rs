@@ -26,11 +26,11 @@ impl Measurements {
     pub fn serialize_with_nonce(
         &self,
         nonce: &Nonce,
-    ) -> ([u8; Measurements::MAX_SIZE + Nonce::SIZE], usize) {
-        let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-        let size = serialize(&mut buf, &self).unwrap();
-        buf[size..size + nonce.len()].copy_from_slice(nonce.as_slice());
-        (buf, size + nonce.len())
+        out: &mut [u8],
+    ) -> hubpack::error::Result<usize> {
+        let size = serialize(out, self).unwrap();
+        out[size..size + nonce.len()].copy_from_slice(nonce.as_slice());
+        Ok(size + nonce.len())
     }
 }
 

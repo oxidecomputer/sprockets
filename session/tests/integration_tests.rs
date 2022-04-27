@@ -11,10 +11,16 @@ use salty;
 use sprockets_common::msgs::{RotRequest, RotResponse};
 use sprockets_common::{random_buf, Ed25519PublicKey};
 use sprockets_rot::{RotConfig, RotSprocket};
-use sprockets_session::{ClientHandshake, RecvToken, ServerHandshake, UserAction, Vec};
+use sprockets_session::{ClientHandshake, HandshakeMsgVec, RecvToken, ServerHandshake, UserAction};
 
 // Initialize the necessary components for testing
-fn bootstrap() -> (ChannelClient, Vec, RecvToken, ChannelServer, RecvToken) {
+fn bootstrap() -> (
+    ChannelClient,
+    HandshakeMsgVec,
+    RecvToken,
+    ChannelServer,
+    RecvToken,
+) {
     // All certs should trace back to the same manufacturing key
     let manufacturing_keypair = salty::Keypair::from(&random_buf());
     let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
@@ -23,7 +29,7 @@ fn bootstrap() -> (ChannelClient, Vec, RecvToken, ChannelServer, RecvToken) {
     let (client_tx, server_rx) = mpsc::channel();
     let (server_tx, client_rx) = mpsc::channel();
 
-    let mut client_hello_buf = Vec::new();
+    let mut client_hello_buf = HandshakeMsgVec::new();
     client_hello_buf
         .resize_default(client_hello_buf.capacity())
         .unwrap();
@@ -60,8 +66,8 @@ fn bootstrap() -> (ChannelClient, Vec, RecvToken, ChannelServer, RecvToken) {
 // A client using 2 channels for transport
 struct ChannelClient {
     rot: RotSprocket,
-    tx: Sender<Vec>,
-    rx: Receiver<Vec>,
+    tx: Sender<HandshakeMsgVec>,
+    rx: Receiver<HandshakeMsgVec>,
 
     // We start with a handshake, and then transition to a session upon
     // handshake completion
@@ -71,7 +77,7 @@ struct ChannelClient {
 impl ChannelClient {
     // Run the client so that it completes the handshake then sends an encrypted
     // msg, "oxide", that gets echoed back from the server.
-    pub fn run(&mut self, hello: Vec, recv_token: RecvToken) {
+    pub fn run(&mut self, hello: HandshakeMsgVec, recv_token: RecvToken) {
         // Send the ClientHello
         self.tx.send(hello).unwrap();
 
@@ -94,11 +100,11 @@ impl ChannelClient {
                 }
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
-                    let mut msg = Vec::new();
+                    let mut msg = HandshakeMsgVec::new();
                     msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
-                    let next_action = hs.next_msg(&mut msg, token).unwrap();
+                    let next_action = hs.create_next_msg(&mut msg, token).unwrap();
 
                     self.tx.send(msg).unwrap();
                     next_action
@@ -123,10 +129,10 @@ impl ChannelClient {
         // and receive application level messages.
         let mut session = hs.new_session(completion_token);
 
-        // A handshake Vec is large enough for this test message. In practice, a
+        // A handshake HandshakeMsgVec is large enough for this test message. In practice, a
         // different type would be used. We only use the same type to require
         // only two channels.
-        let mut msg = Vec::new();
+        let mut msg = HandshakeMsgVec::new();
         msg.extend_from_slice(b"oxide").unwrap();
 
         // Encrypt and send the message
@@ -145,8 +151,8 @@ impl ChannelClient {
 // A server using 2 channels for transport
 struct ChannelServer {
     rot: RotSprocket,
-    tx: Sender<Vec>,
-    rx: Receiver<Vec>,
+    tx: Sender<HandshakeMsgVec>,
+    rx: Receiver<HandshakeMsgVec>,
 
     // We start with a handshake, and then transition to a session upon
     // handshake completion
@@ -177,11 +183,11 @@ impl ChannelServer {
                 }
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
-                    let mut msg = Vec::new();
+                    let mut msg = HandshakeMsgVec::new();
                     msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
-                    let next_action = hs.next_msg(&mut msg, token).unwrap();
+                    let next_action = hs.create_next_msg(&mut msg, token).unwrap();
 
                     self.tx.send(msg).unwrap();
                     next_action

@@ -45,7 +45,7 @@ pub const TAG_LEN: usize = 16;
 
 pub const MAX_HANDSHAKE_MSG_SIZE: usize = HandshakeMsgV1::MAX_SIZE + TAG_LEN;
 
-pub type Vec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
+pub type HandshakeMsgVec = heapless::Vec<u8, MAX_HANDSHAKE_MSG_SIZE>;
 
 // Is endpoint a client or server
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

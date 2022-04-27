@@ -6,10 +6,6 @@ use derive_more::From;
 use hubpack::SerializedSize;
 use salty;
 use serde::{Deserialize, Serialize};
-use serde_big_array::big_array;
-
-// Macro must be invoked to provide big array support for serde
-big_array! { BigArray; }
 
 pub use crate::{Ed25519PublicKey, Ed25519Signature};
 

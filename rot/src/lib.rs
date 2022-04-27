@@ -12,18 +12,13 @@ use sprockets_common::measurements::{
     HbsMeasurements, Measurements, RotMeasurements, SpMeasurements,
 };
 use sprockets_common::msgs::*;
-use sprockets_common::{random_buf, Sha3_256Digest};
+use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
 
 use hubpack::{deserialize, serialize};
 use salty;
 
 /// A key management and measurement service run on the RoT
 pub struct RotSprocket {
-    /// The key of the intermediate manufacturing cert that serves as the root
-    /// of trust of this platform.
-    manufacturing_public_key: Ed25519PublicKey,
-
-    device_id_keypair: salty::Keypair,
     measurement_keypair: salty::Keypair,
     dhe_keypair: salty::Keypair,
 
@@ -36,8 +31,6 @@ pub struct RotSprocket {
 impl RotSprocket {
     pub fn new(config: RotConfig) -> RotSprocket {
         let mut rot = RotSprocket {
-            manufacturing_public_key: config.manufacturing_public_key,
-            device_id_keypair: config.device_id_keypair,
             measurement_keypair: config.measurement_keypair,
             dhe_keypair: config.dhe_keypair,
             certificates: config.certificates,
@@ -90,7 +83,8 @@ impl RotSprocket {
             }
             RotOp::GetMeasurements(nonce) => {
                 // We sign the serialized form.
-                let (buf, size) = self.measurements.serialize_with_nonce(&nonce);
+                let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+                let size = self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
                 let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
                 RotResult::Measurements(self.measurements.clone(), nonce, sig)
@@ -216,7 +210,10 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let (signed_buf, size) = measurements.serialize_with_nonce(&nonce);
+            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let size = measurements
+                .serialize_with_nonce(&nonce, &mut signed_buf)
+                .unwrap();
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
@@ -266,7 +263,10 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let (signed_buf, size) = measurements.serialize_with_nonce(&nonce);
+            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let size = measurements
+                .serialize_with_nonce(&nonce, &mut signed_buf)
+                .unwrap();
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();

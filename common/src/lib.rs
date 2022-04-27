@@ -12,16 +12,13 @@ use rand::{rngs::OsRng, RngCore};
 use derive_more::From;
 use hubpack::SerializedSize;
 use serde::{Deserialize, Serialize};
-use serde_big_array::big_array;
+use serde_big_array::BigArray;
 
 pub mod certificates;
 pub mod measurements;
 pub mod msgs;
 
 pub use measurements::Measurements;
-
-// Macro must be invoked to provide big array support for serde
-big_array! { BigArray; }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
@@ -31,7 +28,7 @@ pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
 // Output of HMAC<Sha3_256>
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub struct Hmac(pub [u8; 32]);
+pub struct HmacSha3_256(pub [u8; 32]);
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,

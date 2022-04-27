@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use hubpack::deserialize;
+use hubpack::{deserialize, SerializedSize};
 use rand_core::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -13,7 +13,8 @@ use crate::msgs::{
     IdentityVerify,
 };
 use crate::{
-    CompletionToken, DalekVerifier, Error, RecvToken, Role, SendToken, Session, UserAction, Vec,
+    CompletionToken, DalekVerifier, Error, HandshakeMsgVec, RecvToken, Role, SendToken, Session,
+    UserAction,
 };
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
 use sprockets_common::msgs::{RotOp, RotResult};
@@ -85,7 +86,7 @@ impl ClientHandshake {
     pub fn init(
         manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> (ClientHandshake, RecvToken) {
         let secret = EphemeralSecret::new(OsRng);
         let public_key = PublicKey::from(&secret);
@@ -123,7 +124,11 @@ impl ClientHandshake {
     ///
     /// We take a mutable buffer because we decrypt in place to prevent the
     /// need to allocate.
-    pub fn handle(&mut self, buf: &mut Vec, _token: RecvToken) -> Result<UserAction, Error> {
+    pub fn handle(
+        &mut self,
+        buf: &mut HandshakeMsgVec,
+        _token: RecvToken,
+    ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
             State::Hello {
@@ -174,7 +179,11 @@ impl ClientHandshake {
     //
     // This requires a SendToken to ensure that it will only be called when the
     // next state in the protocol handshake requires sending a message.
-    pub fn next_msg(&mut self, buf: &mut Vec, _token: SendToken) -> Result<UserAction, Error> {
+    pub fn create_next_msg(
+        &mut self,
+        buf: &mut HandshakeMsgVec,
+        _token: SendToken,
+    ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
             State::SendIdentity {
@@ -250,7 +259,7 @@ impl ClientHandshake {
         measurements: Measurements,
         measurements_sig: Ed25519Signature,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
@@ -284,7 +293,7 @@ impl ClientHandshake {
         &mut self,
         transcript_signature: Ed25519Signature,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
@@ -307,7 +316,7 @@ impl ClientHandshake {
     fn create_finished_msg(
         &mut self,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         // We clone so we can use the intermediate hash value but maintain
         // the running hash computation.
@@ -341,7 +350,7 @@ impl ClientHandshake {
         &mut self,
         client_nonce: Nonce,
         secret: EphemeralSecret,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
         validate_version(&msg.version)?;
@@ -376,7 +385,7 @@ impl ClientHandshake {
         client_nonce: Nonce,
         server_nonce: Nonce,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::Identity(identity) = msg_data {
@@ -389,11 +398,14 @@ impl ClientHandshake {
 
             // Ensure measurements concatenated with the client nonce are
             // properly signed.
-            let (buf, size) = identity.measurements.serialize_with_nonce(&client_nonce);
+            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let size = identity
+                .measurements
+                .serialize_with_nonce(&client_nonce, &mut signed_buf)?;
             DalekVerifier
                 .verify(
                     &identity.certs.measurement.subject_public_key,
-                    &buf[..size],
+                    &signed_buf[..size],
                     &identity.measurements_sig,
                 )
                 .map_err(|_| Error::BadMeasurementsSig)?;
@@ -416,7 +428,7 @@ impl ClientHandshake {
         server_identity: Identity,
         server_nonce: Nonce,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::IdentityVerify(identity_verify) = msg_data {
@@ -454,7 +466,7 @@ impl ClientHandshake {
         &mut self,
         server_nonce: Nonce,
         mut hs: HandshakeState,
-        buf: &mut Vec,
+        buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
         let msg_data = hs.decrypt_and_deserialize(buf)?;
         if let HandshakeMsgDataV1::Finished(finished) = msg_data {
