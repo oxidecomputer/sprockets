@@ -3,13 +3,11 @@ name = "sprockets-common"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 derive_more = "0.99.17"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
-serde-big-array = { version = "0.3.2" }
+serde-big-array = { version = "0.4.1" }
 rand = { version = "0.8.5", optional = true }
 salty = { version = "0.2.0", optional = true }
 

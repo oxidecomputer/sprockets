@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::certificates::{Ed25519Certificates, Ed25519Signature};
 use crate::measurements::{HostMeasurements, Measurements};
-use crate::Nonce;
+use crate::{Nonce, Sha3_256Digest};
 
 /// A request to an RoT from an SP
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
@@ -31,6 +31,7 @@ pub enum RotOp {
     GetCertificates,
     AddHostMeasurements(HostMeasurements),
     GetMeasurements(Nonce),
+    SignTranscript(Sha3_256Digest),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
@@ -52,6 +53,7 @@ pub enum RotResult {
     Err(RotError),
     Certificates(Ed25519Certificates),
     Measurements(Measurements, Nonce, Ed25519Signature),
+    SignedTranscript(Ed25519Signature),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]

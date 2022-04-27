@@ -9,21 +9,16 @@
 
 use sprockets_common::certificates::{Ed25519Certificates, Ed25519PublicKey, Ed25519Signature};
 use sprockets_common::measurements::{
-    HbsMeasurements, MeasurementCorpus, Measurements, RotMeasurements, SpMeasurements,
+    HbsMeasurements, Measurements, RotMeasurements, SpMeasurements,
 };
 use sprockets_common::msgs::*;
-use sprockets_common::{random_buf, Nonce, Sha256Digest};
+use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
 
-use hubpack::{deserialize, serialize, SerializedSize};
+use hubpack::{deserialize, serialize};
 use salty;
 
 /// A key management and measurement service run on the RoT
 pub struct RotSprocket {
-    /// The key of the intermediate manufacturing cert that serves as the root
-    /// of trust of this platform.
-    manufacturing_public_key: Ed25519PublicKey,
-
-    device_id_keypair: salty::Keypair,
     measurement_keypair: salty::Keypair,
     dhe_keypair: salty::Keypair,
 
@@ -31,21 +26,15 @@ pub struct RotSprocket {
 
     /// Measurements get filled in by the running service
     measurements: Measurements,
-
-    /// The expected value of measurements (shipped with fw update)
-    corpus: MeasurementCorpus,
 }
 
 impl RotSprocket {
     pub fn new(config: RotConfig) -> RotSprocket {
         let mut rot = RotSprocket {
-            manufacturing_public_key: config.manufacturing_public_key,
-            device_id_keypair: config.device_id_keypair,
             measurement_keypair: config.measurement_keypair,
             dhe_keypair: config.dhe_keypair,
             certificates: config.certificates,
             measurements: Measurements::default(),
-            corpus: config.corpus,
         };
         rot.take_fake_measurements();
         rot
@@ -53,74 +42,18 @@ impl RotSprocket {
 
     pub fn take_fake_measurements(&mut self) {
         self.measurements.rot = Some(RotMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
 
         self.measurements.sp = Some(SpMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
 
         self.measurements.hbs = Some(HbsMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         });
     }
-}
 
-pub struct RotConfig {
-    pub manufacturing_public_key: Ed25519PublicKey,
-    pub certificates: Ed25519Certificates,
-    pub corpus: MeasurementCorpus,
-
-    // TODO: Should we instead use the generic array forms and convert to salty
-    // as needed?
-    pub device_id_keypair: salty::Keypair,
-    pub measurement_keypair: salty::Keypair,
-    pub dhe_keypair: salty::Keypair,
-}
-
-impl RotConfig {
-    // TODO: remove this altogether eventually
-    // Use salty to create the keys and do signing. This allows us to run
-    // the code on the RoT and Host.
-    pub fn bootstrap_for_testing() -> RotConfig {
-        let manufacturing_keypair = salty::Keypair::from(&random_buf());
-        let device_id_keypair = salty::Keypair::from(&random_buf());
-        let measurement_keypair = salty::Keypair::from(&random_buf());
-        let dhe_keypair = salty::Keypair::from(&random_buf());
-        let certificates = Ed25519Certificates::bootstrap_for_testing(
-            &manufacturing_keypair,
-            &device_id_keypair,
-            &measurement_keypair,
-            &dhe_keypair,
-        );
-        let corpus = MeasurementCorpus::default();
-        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
-
-        RotConfig {
-            manufacturing_public_key,
-            certificates,
-            corpus,
-            device_id_keypair,
-            measurement_keypair,
-            dhe_keypair,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RotSprocketError {
-    InvalidSerializedReq,
-    DeserializationBufferTooSmall,
-    Hubpack(hubpack::error::Error),
-}
-
-impl From<hubpack::error::Error> for RotSprocketError {
-    fn from(e: hubpack::error::Error) -> Self {
-        RotSprocketError::Hubpack(e)
-    }
-}
-
-impl RotSprocket {
     /// Handle a serialized request
     pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<usize, RotSprocketError> {
         let (request, _) = deserialize::<RotRequest>(req)?;
@@ -150,15 +83,72 @@ impl RotSprocket {
             }
             RotOp::GetMeasurements(nonce) => {
                 // We sign the serialized form.
-                let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-                let size = serialize(&mut buf, &self.measurements)?;
-                buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
-                let sig = self.measurement_keypair.sign(&buf[..size + nonce.len()]);
+                let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+                let size = self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
+                let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
-                RotResult::Measurements(self.measurements.clone(), nonce.clone(), sig)
+                RotResult::Measurements(self.measurements.clone(), nonce, sig)
+            }
+            RotOp::SignTranscript(transcript_hash) => {
+                let sig = self.dhe_keypair.sign(&transcript_hash.0);
+                RotResult::SignedTranscript(Ed25519Signature(sig.to_bytes()))
             }
         };
         Ok(RotResponse::V1 { id, result })
+    }
+
+    pub fn get_certificates(&self) -> Ed25519Certificates {
+        self.certificates.clone()
+    }
+}
+
+pub struct RotConfig {
+    pub manufacturing_public_key: Ed25519PublicKey,
+    pub certificates: Ed25519Certificates,
+
+    // TODO: Should we instead use the generic array forms and convert to salty
+    // as needed?
+    pub device_id_keypair: salty::Keypair,
+    pub measurement_keypair: salty::Keypair,
+    pub dhe_keypair: salty::Keypair,
+}
+
+impl RotConfig {
+    // TODO: remove this altogether eventually
+    // Use salty to create the keys and do signing. This allows us to run
+    // the code on the RoT and Host.
+    pub fn bootstrap_for_testing(manufacturing_keypair: &salty::Keypair) -> RotConfig {
+        let device_id_keypair = salty::Keypair::from(&random_buf());
+        let measurement_keypair = salty::Keypair::from(&random_buf());
+        let dhe_keypair = salty::Keypair::from(&random_buf());
+        let certificates = Ed25519Certificates::bootstrap_for_testing(
+            manufacturing_keypair,
+            &device_id_keypair,
+            &measurement_keypair,
+            &dhe_keypair,
+        );
+        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+
+        RotConfig {
+            manufacturing_public_key,
+            certificates,
+            device_id_keypair,
+            measurement_keypair,
+            dhe_keypair,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RotSprocketError {
+    InvalidSerializedReq,
+    DeserializationBufferTooSmall,
+    Hubpack(hubpack::error::Error),
+}
+
+impl From<hubpack::error::Error> for RotSprocketError {
+    fn from(e: hubpack::error::Error) -> Self {
+        RotSprocketError::Hubpack(e)
     }
 }
 
@@ -166,10 +156,12 @@ impl RotSprocket {
 mod tests {
     use super::*;
     use sprockets_common::measurements::HostMeasurements;
+    use sprockets_common::Nonce;
 
     #[test]
     fn test_get_certificates() {
-        let config = RotConfig::bootstrap_for_testing();
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
         let expected_certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let req = RotRequest::V1 {
@@ -194,7 +186,8 @@ mod tests {
 
     #[test]
     fn test_measurements() {
-        let config = RotConfig::bootstrap_for_testing();
+        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
         let certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let nonce = Nonce::new();
@@ -217,17 +210,15 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-            let size = serialize(&mut signed_buf, &measurements).unwrap();
-            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let size = measurements
+                .serialize_with_nonce(&nonce, &mut signed_buf)
+                .unwrap();
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
             assert!(measurement_pub_key
-                .verify(
-                    &signed_buf[..size + nonce.len()],
-                    &salty::Signature::from(&sig.0)
-                )
+                .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());
 
             assert!(measurements.host.is_none());
@@ -238,7 +229,7 @@ mod tests {
         // Add host measurements
 
         let host_measurements = HostMeasurements {
-            tcb: Sha256Digest(random_buf()),
+            tcb: Sha3_256Digest(random_buf()),
         };
         let req = RotRequest::V1 {
             id: 2,
@@ -272,17 +263,15 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::SIZE];
-            let size = serialize(&mut signed_buf, &measurements).unwrap();
-            signed_buf[size..size + nonce.len()].copy_from_slice(&nonce.as_slice());
+            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let size = measurements
+                .serialize_with_nonce(&nonce, &mut signed_buf)
+                .unwrap();
 
             let measurement_pub_key =
                 salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
             assert!(measurement_pub_key
-                .verify(
-                    &signed_buf[..size + nonce.len()],
-                    &salty::Signature::from(&sig.0)
-                )
+                .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());
 
             // Ensure we got back the measurements we sent

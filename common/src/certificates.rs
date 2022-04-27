@@ -6,16 +6,8 @@ use derive_more::From;
 use hubpack::SerializedSize;
 use salty;
 use serde::{Deserialize, Serialize};
-use serde_big_array::big_array;
 
-// Macro must be invoked to provide big array support for serde
-big_array! { BigArray; }
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub struct Ed25519PublicKey(pub [u8; 32]);
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
-pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
+pub use crate::{Ed25519PublicKey, Ed25519Signature};
 
 /// The set of all certificates for a given RoT
 ///

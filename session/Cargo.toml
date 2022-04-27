@@ -1,0 +1,33 @@
+[package]
+name = "sprockets-session"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sprockets-common = { path = "../common", features = ["rand"] }
+derive_more = "0.99.17"
+hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
+serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
+serde-big-array = { version = "0.3.2" }
+
+# x25519-dalek requires 0.5.1. 0.6.X versions are incompatible.
+# There is an outstanding PR for this, but no response from the maintainer.
+# There is also a 2.0.0 pre-release that hasn't been touched in 7 months.
+# Interestingly salty uses the dalek agreement basically
+#
+# The ring API requires a KDF and is a bit more awkward to use.
+#
+rand_core = { version = "0.6.3", features = ["getrandom"] }
+ed25519 = { version = "1.4.1" }
+ed25519-dalek = { version = "1.0.1", features = ["u64_backend"]}
+x25519-dalek = { version = "2.0.0-pre.1" }
+sha3 = "0.10.1"
+chacha20poly1305 = { version = "0.10.0-pre", features = ["heapless"] }
+hkdf = "0.12.3"
+zeroize = "1.5.4"
+hmac = "0.12.1"
+
+[dev-dependencies]
+# Salty is used by the RoT for Ed25519 signatures
+salty = { version = "0.2.0" }
+sprockets-rot = { path = "../rot" }

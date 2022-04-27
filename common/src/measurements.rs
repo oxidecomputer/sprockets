@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use derive_more::From;
-use hubpack::SerializedSize;
+use hubpack::{serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 
 use crate::certificates::SerialNumber;
-use crate::Sha256Digest;
+use crate::{Nonce, Sha3_256Digest};
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
@@ -20,32 +20,46 @@ pub struct Measurements {
     pub host: Option<HostMeasurements>,
 }
 
+impl Measurements {
+    /// Serialize the measurements and concatenate with a nonce in the buffer.
+    /// This is useful for signing and verification.
+    pub fn serialize_with_nonce(
+        &self,
+        nonce: &Nonce,
+        out: &mut [u8],
+    ) -> hubpack::error::Result<usize> {
+        let size = serialize(out, self).unwrap();
+        out[size..size + nonce.len()].copy_from_slice(nonce.as_slice());
+        Ok(size + nonce.len())
+    }
+}
+
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct RotMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct SpMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HbsMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
     Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
 )]
 pub struct HostMeasurements {
-    pub tcb: Sha256Digest,
+    pub tcb: Sha3_256Digest,
 }
 
 #[derive(
