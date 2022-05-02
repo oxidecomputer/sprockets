@@ -10,7 +10,6 @@ use crate::certificates::{Ed25519Certificates, Ed25519Signature};
 use crate::measurements::{HostMeasurements, Measurements};
 use crate::{Nonce, Sha3_256Digest};
 
-/// A request to an RoT from an SP
 #[derive(
     Debug,
     Copy,
@@ -22,14 +21,18 @@ use crate::{Nonce, Sha3_256Digest};
     Deserialize,
     SerializedSize,
 )]
-pub enum RotRequest {
-    V1 {
-        /// A monotonic counter used to differentiate requests
-        id: u32,
+pub struct RotRequestV1 {
+    /// Every version of an RotRequest should start with a u32 version
+    /// We can extract this into its own type using the zero-overhead struct
+    /// capability of Hubpack, when we want to differentiate requests on the
+    /// wire.
+    pub version: u32,
 
-        /// The operation requested of the RoT
-        op: RotOp,
-    },
+    /// A monotonic counter used to differentiate requests
+    pub id: u64,
+
+    /// The operation requested of the RoT
+    pub op: RotOpV1,
 }
 
 /// Requested operations of the RoT by the SP.
@@ -47,7 +50,7 @@ pub enum RotRequest {
     Deserialize,
     SerializedSize,
 )]
-pub enum RotOp {
+pub enum RotOpV1 {
     GetCertificates,
     AddHostMeasurements(HostMeasurements),
     GetMeasurements(Nonce),
@@ -65,16 +68,15 @@ pub enum RotOp {
     Deserialize,
     SerializedSize,
 )]
-pub enum RotResponse {
-    V1 {
-        /// A monotonic counter used to differentiate requests
-        id: u32,
+pub struct RotResponseV1 {
+    pub version: u32,
 
-        // The result of a requested operation from the RoT
-        //
-        // TODO: Same as in the RotRequest. Make this an opcode
-        result: RotResult,
-    },
+    /// A monotonic counter used to differentiate requests
+    /// This matches the RotRequestV1 value.
+    pub id: u64,
+
+    // The result of a requested operation from the RoT
+    pub result: RotResultV1,
 }
 
 #[derive(
@@ -88,7 +90,7 @@ pub enum RotResponse {
     Deserialize,
     SerializedSize,
 )]
-pub enum RotResult {
+pub enum RotResultV1 {
     Ok,
     Err(RotError),
     Certificates(Ed25519Certificates),

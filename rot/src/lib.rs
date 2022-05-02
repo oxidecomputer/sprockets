@@ -62,7 +62,7 @@ impl RotSprocket {
         req: &[u8],
         rsp: &mut [u8],
     ) -> Result<usize, RotSprocketError> {
-        let (request, _) = deserialize::<RotRequest>(req)?;
+        let (request, _) = deserialize::<RotRequestV1>(req)?;
         let response = self.handle_deserialized(request)?;
         let pos = serialize(rsp, &response)?;
         Ok(pos)
@@ -71,39 +71,50 @@ impl RotSprocket {
     /// Handle a request and return a reply
     pub fn handle_deserialized(
         &mut self,
-        request: RotRequest,
-    ) -> Result<RotResponse, RotSprocketError> {
-        let RotRequest::V1 { id, op } = request;
+        request: RotRequestV1,
+    ) -> Result<RotResponseV1, RotSprocketError> {
+        let RotRequestV1 { version, id, op } = request;
+        if version != 1 {
+            return Ok(RotResponseV1 {
+                version: 1,
+                id,
+                result: RotResultV1::Err(RotError::UnsupportedVersion),
+            });
+        }
         let result = match op {
-            RotOp::GetCertificates => {
-                RotResult::Certificates(self.certificates.clone())
+            RotOpV1::GetCertificates => {
+                RotResultV1::Certificates(self.certificates.clone())
             }
-            RotOp::AddHostMeasurements(measurements) => {
+            RotOpV1::AddHostMeasurements(measurements) => {
                 if self.measurements.host.is_some() {
-                    RotResult::Err(RotError::AddHostMeasurements(
+                    RotResultV1::Err(RotError::AddHostMeasurements(
                         AddHostMeasurementsError::AlreadyAdded,
                     ))
                 } else {
                     // TODO: Check corpus for validity
                     self.measurements.host = Some(measurements);
-                    RotResult::Ok
+                    RotResultV1::Ok
                 }
             }
-            RotOp::GetMeasurements(nonce) => {
+            RotOpV1::GetMeasurements(nonce) => {
                 // We sign the serialized form.
                 let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
                 let size =
                     self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
                 let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
-                RotResult::Measurements(self.measurements.clone(), nonce, sig)
+                RotResultV1::Measurements(self.measurements.clone(), nonce, sig)
             }
-            RotOp::SignTranscript(transcript_hash) => {
+            RotOpV1::SignTranscript(transcript_hash) => {
                 let sig = self.dhe_keypair.sign(&transcript_hash.0);
-                RotResult::SignedTranscript(Ed25519Signature(sig.to_bytes()))
+                RotResultV1::SignedTranscript(Ed25519Signature(sig.to_bytes()))
             }
         };
-        Ok(RotResponse::V1 { id, result })
+        Ok(RotResponseV1 {
+            version,
+            id,
+            result,
+        })
     }
 
     pub fn get_certificates(&self) -> Ed25519Certificates {
@@ -176,17 +187,18 @@ mod tests {
         let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
         let expected_certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
-        let req = RotRequest::V1 {
+        let req = RotRequestV1 {
+            version: 1,
             id: 0,
-            op: RotOp::GetCertificates,
+            op: RotOpV1::GetCertificates,
         };
-        let mut reqbuf = [0u8; RotRequest::MAX_SIZE];
-        let mut rspbuf = [0u8; RotResponse::MAX_SIZE];
+        let mut reqbuf = [0u8; RotRequestV1::MAX_SIZE];
+        let mut rspbuf = [0u8; RotResponseV1::MAX_SIZE];
         serialize(&mut reqbuf, &req).unwrap();
         rot.handle(&reqbuf, &mut rspbuf).unwrap();
-        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
-        if let RotResponse::V1 {
-            result: RotResult::Certificates(certificates),
+        let (rsp, _) = deserialize::<RotResponseV1>(&rspbuf).unwrap();
+        if let RotResponseV1 {
+            result: RotResultV1::Certificates(certificates),
             ..
         } = rsp
         {
@@ -205,17 +217,18 @@ mod tests {
         let nonce = Nonce::new();
 
         // Get measurements before we have added host measurements
-        let req = RotRequest::V1 {
+        let req = RotRequestV1 {
+            version: 1,
             id: 1,
-            op: RotOp::GetMeasurements(nonce.clone()),
+            op: RotOpV1::GetMeasurements(nonce.clone()),
         };
-        let mut reqbuf = [0u8; RotRequest::MAX_SIZE];
-        let mut rspbuf = [0u8; RotResponse::MAX_SIZE];
+        let mut reqbuf = [0u8; RotRequestV1::MAX_SIZE];
+        let mut rspbuf = [0u8; RotResponseV1::MAX_SIZE];
         let size = serialize(&mut reqbuf, &req).unwrap();
         rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
-        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
-        if let RotResponse::V1 {
-            result: RotResult::Measurements(measurements, nonce_received, sig),
+        let (rsp, _) = deserialize::<RotResponseV1>(&rspbuf).unwrap();
+        if let RotResponseV1 {
+            result: RotResultV1::Measurements(measurements, nonce_received, sig),
             ..
         } = rsp
         {
@@ -246,32 +259,36 @@ mod tests {
         let host_measurements = HostMeasurements {
             tcb: Sha3_256Digest(random_buf()),
         };
-        let req = RotRequest::V1 {
+        let req = RotRequestV1 {
+            version: 1,
             id: 2,
-            op: RotOp::AddHostMeasurements(host_measurements),
+            op: RotOpV1::AddHostMeasurements(host_measurements),
         };
         let size = serialize(&mut reqbuf, &req).unwrap();
         rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
-        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
+        let (rsp, _) = deserialize::<RotResponseV1>(&rspbuf).unwrap();
         assert!(matches!(
             rsp,
-            RotResponse::V1 {
+            RotResponseV1 {
+                version: 1,
                 id: 2,
-                result: RotResult::Ok
+                result: RotResultV1::Ok
             }
         ));
 
         let nonce = Nonce::new();
         // Now recheck to ensure the host measurement was added.
-        let req = RotRequest::V1 {
+        let req = RotRequestV1 {
+            version: 1,
             id: 3,
-            op: RotOp::GetMeasurements(nonce.clone()),
+            op: RotOpV1::GetMeasurements(nonce.clone()),
         };
         let size = serialize(&mut reqbuf, &req).unwrap();
         rot.handle(&reqbuf[..size], &mut rspbuf).unwrap();
-        let (rsp, _) = deserialize::<RotResponse>(&rspbuf).unwrap();
-        if let RotResponse::V1 {
-            result: RotResult::Measurements(measurements, nonce_received, sig),
+        let (rsp, _) = deserialize::<RotResponseV1>(&rspbuf).unwrap();
+        if let RotResponseV1 {
+            version: 1,
+            result: RotResultV1::Measurements(measurements, nonce_received, sig),
             id: 3,
         } = rsp
         {

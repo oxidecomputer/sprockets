@@ -9,7 +9,7 @@
 use corncobs::{self, CobsError};
 use hubpack::{deserialize, serialize, SerializedSize};
 use serialport::{self, SerialPort};
-use sprockets_common::msgs::{RotRequest, RotResponse};
+use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -63,20 +63,20 @@ impl Uart {
 
     // Send an RotRequest over the UART, where it will be proxied by the SP and
     // eventually reach the RoT.
-    pub fn send(&mut self, req: RotRequest) -> Result<(), SendError> {
-        let mut req_buf = [0u8; RotRequest::MAX_SIZE];
+    pub fn send(&mut self, req: RotRequestV1) -> Result<(), SendError> {
+        let mut req_buf = [0u8; RotRequestV1::MAX_SIZE];
         let size = serialize(&mut req_buf, &req)?;
         let mut encoded_buf =
-            [0xFFu8; corncobs::max_encoded_len(RotRequest::MAX_SIZE)];
+            [0xFFu8; corncobs::max_encoded_len(RotRequestV1::MAX_SIZE)];
         let size = corncobs::encode_buf(&req_buf[..size], &mut encoded_buf);
         let _ = self.inner.write_all(&encoded_buf[..size])?;
         Ok(())
     }
 
     // Receive a response to the prior request.
-    pub fn recv(&mut self) -> Result<RotResponse, RecvError> {
+    pub fn recv(&mut self) -> Result<RotResponseV1, RecvError> {
         let mut encoded_rsp_buf =
-            [0xFFu8; corncobs::max_encoded_len(RotResponse::MAX_SIZE)];
+            [0xFFu8; corncobs::max_encoded_len(RotResponseV1::MAX_SIZE)];
         let mut pos = 0;
         // TODO: Should we wait between reads or timeout if a COBS message isn't
         // received in time?
@@ -93,10 +93,10 @@ impl Uart {
             }
         }
 
-        let mut rsp_buf = [0u8; RotResponse::MAX_SIZE];
+        let mut rsp_buf = [0u8; RotResponseV1::MAX_SIZE];
         let size = corncobs::decode_buf(&encoded_rsp_buf[..pos], &mut rsp_buf)?;
 
-        let (response, _) = deserialize::<RotResponse>(&rsp_buf[..size])?;
+        let (response, _) = deserialize::<RotResponseV1>(&rsp_buf[..size])?;
         Ok(response)
     }
 }

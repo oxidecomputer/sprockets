@@ -19,7 +19,7 @@ use crate::{
 use sprockets_common::certificates::{
     Ed25519Certificates, Ed25519Signature, Ed25519Verifier,
 };
-use sprockets_common::msgs::{RotOp, RotResult};
+use sprockets_common::msgs::{RotOpV1, RotResultV1};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
 // The current state of the server handshake state machine
@@ -183,13 +183,13 @@ impl ServerHandshake {
     ///
     /// Note that these are not encrypted nor serialized.
     /// Serialization/Deserialization is performed by the user, because the
-    /// user also puts the `RotOp` into the `RotRequest`, and removes the
-    /// `RotResult` from the `RotResponse`. This is useful as it allows the user
+    /// user also puts the `RotOpV1` into the `RotRequest`, and removes the
+    /// `RotResultV1` from the `RotResponse`. This is useful as it allows the user
     /// to keep track of request ids for RotRequests across multiple sessions.
     /// The session code does not have to worry about this as a result.
     pub fn handle_rot_reply(
         &mut self,
-        result: RotResult,
+        result: RotResultV1,
     ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
@@ -286,7 +286,7 @@ impl ServerHandshake {
             handshake_state,
         });
 
-        Ok(RotOp::GetMeasurements(client_nonce).into())
+        Ok(RotOpV1::GetMeasurements(client_nonce).into())
     }
 
     fn handle_signed_measurements(
@@ -294,9 +294,10 @@ impl ServerHandshake {
         client_nonce: Nonce,
         server_nonce: Nonce,
         hs: HandshakeState,
-        result: RotResult,
+        result: RotResultV1,
     ) -> Result<UserAction, Error> {
-        if let RotResult::Measurements(measurements, nonce, signature) = result
+        if let RotResultV1::Measurements(measurements, nonce, signature) =
+            result
         {
             if nonce != client_nonce {
                 return Err(Error::BadNonce);
@@ -347,16 +348,16 @@ impl ServerHandshake {
         //   H(ClientHello || ServerHello || Identity(S))
         //
         let hash = Sha3_256Digest(self.transcript.clone().finalize().into());
-        Ok(RotOp::SignTranscript(hash).into())
+        Ok(RotOpV1::SignTranscript(hash).into())
     }
 
     fn handle_signed_transcript(
         &mut self,
         server_nonce: Nonce,
         hs: HandshakeState,
-        result: RotResult,
+        result: RotResultV1,
     ) -> Result<UserAction, Error> {
-        if let RotResult::SignedTranscript(signature) = result {
+        if let RotResultV1::SignedTranscript(signature) = result {
             // Transition to the next state
             self.state = Some(State::SendIdentityVerify {
                 server_nonce,
