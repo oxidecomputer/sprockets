@@ -10,7 +10,16 @@ use crate::certificates::SerialNumber;
 use crate::{Nonce, Sha3_256Digest};
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct Measurements {
     pub serial_number: SerialNumber,
@@ -35,35 +44,80 @@ impl Measurements {
 }
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct RotMeasurements {
     pub tcb: Sha3_256Digest,
 }
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct SpMeasurements {
     pub tcb: Sha3_256Digest,
 }
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct HbsMeasurements {
     pub tcb: Sha3_256Digest,
 }
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct HostMeasurements {
     pub tcb: Sha3_256Digest,
 }
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 /// All allowable hashes for a given version of sw/hw.
 pub struct MeasurementCorpus {

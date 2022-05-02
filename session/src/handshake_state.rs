@@ -15,7 +15,8 @@ use zeroize::Zeroizing;
 
 use crate::msgs::{HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion};
 use crate::{
-    digest_len_buf, nonce_len_buf, Error, HandshakeMsgVec, Role, DIGEST_LEN, KEY_LEN, NONCE_LEN,
+    digest_len_buf, nonce_len_buf, Error, HandshakeMsgVec, Role, DIGEST_LEN,
+    KEY_LEN, NONCE_LEN,
 };
 use sprockets_common::HmacSha3_256;
 
@@ -43,7 +44,10 @@ impl HandshakeState {
     ) -> HandshakeState {
         let initial_salt = [0u8; 32];
         let shared_secret = my_secret.diffie_hellman(peer_public_key);
-        let handshake_secret = Hkdf::<Sha3_256>::new(Some(&initial_salt), shared_secret.as_bytes());
+        let handshake_secret = Hkdf::<Sha3_256>::new(
+            Some(&initial_salt),
+            shared_secret.as_bytes(),
+        );
 
         // Generate client handshake secret PRK
         let mut client_handshake_secret_buf = Zeroizing::new([0u8; KEY_LEN]);
@@ -75,9 +79,11 @@ impl HandshakeState {
         // Setup handshake traffic secrets to be used to generate keys and IVs
         // via HKDF-Expand
         let client_handshake_secret =
-            Hkdf::<Sha3_256>::from_prk(client_handshake_secret_buf.as_ref()).unwrap();
+            Hkdf::<Sha3_256>::from_prk(client_handshake_secret_buf.as_ref())
+                .unwrap();
         let server_handshake_secret =
-            Hkdf::<Sha3_256>::from_prk(server_handshake_secret_buf.as_ref()).unwrap();
+            Hkdf::<Sha3_256>::from_prk(server_handshake_secret_buf.as_ref())
+                .unwrap();
 
         // Create traffic keys and IVs
         let mut client_key = Zeroizing::new([0u8; KEY_LEN]);
@@ -87,27 +93,41 @@ impl HandshakeState {
 
         // Create client key
         client_handshake_secret
-            .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], client_key.as_mut())
+            .expand_multi_info(
+                &[&digest_len_buf()[..], b"spr1 key"],
+                client_key.as_mut(),
+            )
             .unwrap();
 
         // Create server key
         server_handshake_secret
-            .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], server_key.as_mut())
+            .expand_multi_info(
+                &[&digest_len_buf()[..], b"spr1 key"],
+                server_key.as_mut(),
+            )
             .unwrap();
 
         // Create client IV
         client_handshake_secret
-            .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], client_iv.as_mut())
+            .expand_multi_info(
+                &[&nonce_len_buf()[..], b"spr1 iv"],
+                client_iv.as_mut(),
+            )
             .unwrap();
 
         // Create server IV
         server_handshake_secret
-            .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], server_iv.as_mut())
+            .expand_multi_info(
+                &[&nonce_len_buf()[..], b"spr1 iv"],
+                server_iv.as_mut(),
+            )
             .unwrap();
 
         // Initialize AEAD algorithms for client and server
-        let client_aead = ChaCha20Poly1305::new(Key::from_slice(client_key.as_ref()));
-        let server_aead = ChaCha20Poly1305::new(Key::from_slice(server_key.as_ref()));
+        let client_aead =
+            ChaCha20Poly1305::new(Key::from_slice(client_key.as_ref()));
+        let server_aead =
+            ChaCha20Poly1305::new(Key::from_slice(server_key.as_ref()));
 
         let mut client_finished_key = Zeroizing::new([0u8; KEY_LEN]);
         let mut server_finished_key = Zeroizing::new([0u8; KEY_LEN]);
@@ -142,7 +162,10 @@ impl HandshakeState {
         }
     }
 
-    pub fn serialize(msg: HandshakeMsgV1, buf: &mut HandshakeMsgVec) -> Result<(), Error> {
+    pub fn serialize(
+        msg: HandshakeMsgV1,
+        buf: &mut HandshakeMsgVec,
+    ) -> Result<(), Error> {
         let size = serialize(buf, &msg)?;
         buf.truncate(size);
         Ok(())
@@ -211,7 +234,10 @@ impl HandshakeState {
     // XOR the IV with the big-endian counter 0 padded to the left.
     //
     // The IV is 12 bytes (96 bits)
-    fn chacha20poly1305nonce(&mut self, sender_role: Role) -> chacha20poly1305::Nonce {
+    fn chacha20poly1305nonce(
+        &mut self,
+        sender_role: Role,
+    ) -> chacha20poly1305::Nonce {
         let (iv, counter) = match sender_role {
             Role::Client => (&self.client_iv, &mut self.client_nonce_counter),
             Role::Server => (&self.server_iv, &mut self.server_nonce_counter),
@@ -300,8 +326,18 @@ mod tests {
         let server_public_key = PublicKey::from(&server_secret);
         let transcript = [0u8; 32];
 
-        let hs1 = HandshakeState::new(Role::Client, client_secret, &server_public_key, &transcript);
-        let hs2 = HandshakeState::new(Role::Server, server_secret, &client_public_key, &transcript);
+        let hs1 = HandshakeState::new(
+            Role::Client,
+            client_secret,
+            &server_public_key,
+            &transcript,
+        );
+        let hs2 = HandshakeState::new(
+            Role::Server,
+            server_secret,
+            &client_public_key,
+            &transcript,
+        );
 
         (hs1, hs2)
     }

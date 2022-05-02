@@ -7,7 +7,9 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), no_std)]
 
-use sprockets_common::certificates::{Ed25519Certificates, Ed25519PublicKey, Ed25519Signature};
+use sprockets_common::certificates::{
+    Ed25519Certificates, Ed25519PublicKey, Ed25519Signature,
+};
 use sprockets_common::measurements::{
     HbsMeasurements, Measurements, RotMeasurements, SpMeasurements,
 };
@@ -55,7 +57,11 @@ impl RotSprocket {
     }
 
     /// Handle a serialized request
-    pub fn handle(&mut self, req: &[u8], rsp: &mut [u8]) -> Result<usize, RotSprocketError> {
+    pub fn handle(
+        &mut self,
+        req: &[u8],
+        rsp: &mut [u8],
+    ) -> Result<usize, RotSprocketError> {
         let (request, _) = deserialize::<RotRequest>(req)?;
         let response = self.handle_deserialized(request)?;
         let pos = serialize(rsp, &response)?;
@@ -69,7 +75,9 @@ impl RotSprocket {
     ) -> Result<RotResponse, RotSprocketError> {
         let RotRequest::V1 { id, op } = request;
         let result = match op {
-            RotOp::GetCertificates => RotResult::Certificates(self.certificates.clone()),
+            RotOp::GetCertificates => {
+                RotResult::Certificates(self.certificates.clone())
+            }
             RotOp::AddHostMeasurements(measurements) => {
                 if self.measurements.host.is_some() {
                     RotResult::Err(RotError::AddHostMeasurements(
@@ -84,7 +92,8 @@ impl RotSprocket {
             RotOp::GetMeasurements(nonce) => {
                 // We sign the serialized form.
                 let mut buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
-                let size = self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
+                let size =
+                    self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
                 let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
                 RotResult::Measurements(self.measurements.clone(), nonce, sig)
@@ -117,7 +126,9 @@ impl RotConfig {
     // TODO: remove this altogether eventually
     // Use salty to create the keys and do signing. This allows us to run
     // the code on the RoT and Host.
-    pub fn bootstrap_for_testing(manufacturing_keypair: &salty::Keypair) -> RotConfig {
+    pub fn bootstrap_for_testing(
+        manufacturing_keypair: &salty::Keypair,
+    ) -> RotConfig {
         let device_id_keypair = salty::Keypair::from(&random_buf());
         let measurement_keypair = salty::Keypair::from(&random_buf());
         let dhe_keypair = salty::Keypair::from(&random_buf());
@@ -127,7 +138,8 @@ impl RotConfig {
             &measurement_keypair,
             &dhe_keypair,
         );
-        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+        let manufacturing_public_key =
+            Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
 
         RotConfig {
             manufacturing_public_key,
@@ -210,13 +222,16 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let mut signed_buf =
+                [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
             let size = measurements
                 .serialize_with_nonce(&nonce, &mut signed_buf)
                 .unwrap();
 
-            let measurement_pub_key =
-                salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
+            let measurement_pub_key = salty::PublicKey::try_from(
+                &certificates.measurement.subject_public_key.0,
+            )
+            .unwrap();
             assert!(measurement_pub_key
                 .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());
@@ -242,7 +257,7 @@ mod tests {
             rsp,
             RotResponse::V1 {
                 id: 2,
-                result: RotResult::Ok,
+                result: RotResult::Ok
             }
         ));
 
@@ -263,13 +278,16 @@ mod tests {
             assert_eq!(nonce_received, nonce);
 
             // Recreate the buffer that was signed
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let mut signed_buf =
+                [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
             let size = measurements
                 .serialize_with_nonce(&nonce, &mut signed_buf)
                 .unwrap();
 
-            let measurement_pub_key =
-                salty::PublicKey::try_from(&certificates.measurement.subject_public_key.0).unwrap();
+            let measurement_pub_key = salty::PublicKey::try_from(
+                &certificates.measurement.subject_public_key.0,
+            )
+            .unwrap();
             assert!(measurement_pub_key
                 .verify(&signed_buf[..size], &salty::Signature::from(&sig.0))
                 .is_ok());

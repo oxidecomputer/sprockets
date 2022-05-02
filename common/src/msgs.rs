@@ -11,7 +11,17 @@ use crate::measurements::{HostMeasurements, Measurements};
 use crate::{Nonce, Sha3_256Digest};
 
 /// A request to an RoT from an SP
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum RotRequest {
     V1 {
         /// A monotonic counter used to differentiate requests
@@ -26,7 +36,17 @@ pub enum RotRequest {
 ///
 /// Note that these requests may be proxied for the sled-agent, or MGS, but
 /// that is not relevant to the RoT.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum RotOp {
     GetCertificates,
     AddHostMeasurements(HostMeasurements),
@@ -34,7 +54,17 @@ pub enum RotOp {
     SignTranscript(Sha3_256Digest),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum RotResponse {
     V1 {
         /// A monotonic counter used to differentiate requests
@@ -47,7 +77,17 @@ pub enum RotResponse {
     },
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum RotResult {
     Ok,
     Err(RotError),
@@ -56,7 +96,17 @@ pub enum RotResult {
     SignedTranscript(Ed25519Signature),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum RotError {
     BadEncoding,
     UnsupportedVersion,
@@ -66,17 +116,47 @@ pub enum RotError {
     GetMeasurements(GetMeasurementsError),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum GetCertificatesError {
     NotFound,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum AddHostMeasurementsError {
     AlreadyAdded,
     IncorrectMeasurements,
 }
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum GetMeasurementsError {
     NotFound,
 }

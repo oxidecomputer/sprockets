@@ -141,7 +141,8 @@ impl Ed25519Verifier for DalekVerifier {
         msg: &[u8],
         signature: &Ed25519Signature,
     ) -> Result<(), ()> {
-        let public_key = ed25519_dalek::PublicKey::from_bytes(&signer_public_key.0).unwrap();
+        let public_key =
+            ed25519_dalek::PublicKey::from_bytes(&signer_public_key.0).unwrap();
         let signature = ed25519::Signature::from_bytes(&signature.0).unwrap();
         public_key.verify_strict(msg, &signature).map_err(|_| ())?;
         Ok(())

@@ -20,22 +20,71 @@ pub mod msgs;
 
 pub use measurements::Measurements;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Ed25519Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
 // Output of HMAC<Sha3_256>
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct HmacSha3_256(pub [u8; 32]);
 
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct Sha3_256Digest(pub [u8; 32]);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Nonce(pub [u8; 32]);
 
 impl Nonce {

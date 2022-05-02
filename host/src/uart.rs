@@ -50,7 +50,10 @@ pub enum RecvError {
 
 impl Uart {
     // Attach to a uart device
-    pub fn attach(device_path: &str, baud_rate: u32) -> Result<Uart, AttachError> {
+    pub fn attach(
+        device_path: &str,
+        baud_rate: u32,
+    ) -> Result<Uart, AttachError> {
         let inner = serialport::new(device_path, baud_rate)
             .timeout(Duration::from_secs(3))
             .open()?;
@@ -63,7 +66,8 @@ impl Uart {
     pub fn send(&mut self, req: RotRequest) -> Result<(), SendError> {
         let mut req_buf = [0u8; RotRequest::MAX_SIZE];
         let size = serialize(&mut req_buf, &req)?;
-        let mut encoded_buf = [0xFFu8; corncobs::max_encoded_len(RotRequest::MAX_SIZE)];
+        let mut encoded_buf =
+            [0xFFu8; corncobs::max_encoded_len(RotRequest::MAX_SIZE)];
         let size = corncobs::encode_buf(&req_buf[..size], &mut encoded_buf);
         let _ = self.inner.write_all(&encoded_buf[..size])?;
         Ok(())
@@ -71,7 +75,8 @@ impl Uart {
 
     // Receive a response to the prior request.
     pub fn recv(&mut self) -> Result<RotResponse, RecvError> {
-        let mut encoded_rsp_buf = [0xFFu8; corncobs::max_encoded_len(RotResponse::MAX_SIZE)];
+        let mut encoded_rsp_buf =
+            [0xFFu8; corncobs::max_encoded_len(RotResponse::MAX_SIZE)];
         let mut pos = 0;
         // TODO: Should we wait between reads or timeout if a COBS message isn't
         // received in time?

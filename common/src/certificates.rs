@@ -16,7 +16,17 @@ pub use crate::{Ed25519PublicKey, Ed25519Signature};
 ///  1. Manufacturing -> DeviceId -> Measurement
 ///  2. Manufacturing -> DeviceId -> Dhe
 ///
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Ed25519Certificates {
     // Some unique id for the Rot/Sled where these certificates are valid.
     //
@@ -46,7 +56,8 @@ impl Ed25519Certificates {
         dhe_keypair: &salty::Keypair,
     ) -> Ed25519Certificates {
         let serial_number = SerialNumber([0x1d; 16]);
-        let device_id_public_key = Ed25519PublicKey(device_id_keypair.public.to_bytes());
+        let device_id_public_key =
+            Ed25519PublicKey(device_id_keypair.public.to_bytes());
         let device_id = Ed25519Certificate {
             subject_key_type: KeyType::DeviceId,
             signer_key_type: KeyType::Manufacturing,
@@ -58,7 +69,8 @@ impl Ed25519Certificates {
             subject_public_key: device_id_public_key,
         };
 
-        let measurement_public_key = Ed25519PublicKey(measurement_keypair.public.to_bytes());
+        let measurement_public_key =
+            Ed25519PublicKey(measurement_keypair.public.to_bytes());
         let measurement = Ed25519Certificate {
             subject_key_type: KeyType::Measurement,
             signer_key_type: KeyType::DeviceId,
@@ -72,7 +84,9 @@ impl Ed25519Certificates {
         let dhe = Ed25519Certificate {
             subject_key_type: KeyType::Dhe,
             signer_key_type: KeyType::DeviceId,
-            signature: Ed25519Signature(device_id_keypair.sign(&dhe_public_key.0).to_bytes()),
+            signature: Ed25519Signature(
+                device_id_keypair.sign(&dhe_public_key.0).to_bytes(),
+            ),
             subject_public_key: dhe_public_key,
         };
 
@@ -85,7 +99,17 @@ impl Ed25519Certificates {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum Ed25519CertificatesError {
     InvalidDeviceIdSig,
     InvalidMeasurementSig,
@@ -100,7 +124,17 @@ pub enum Ed25519CertificatesError {
 ///
 /// This is a simplified replacement for x.509v3 certs that is suitable for
 /// constrained devices.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Ed25519Certificate {
     pub subject_key_type: KeyType,
     pub subject_public_key: Ed25519PublicKey,
@@ -163,7 +197,9 @@ impl Ed25519Certificates {
         Ok(())
     }
 
-    fn validate_key_type_expectations(&self) -> Result<(), Ed25519CertificatesError> {
+    fn validate_key_type_expectations(
+        &self,
+    ) -> Result<(), Ed25519CertificatesError> {
         // A DeviceId key signs a DHE key
         if self.dhe.subject_key_type != KeyType::Dhe {
             return Err(Ed25519CertificatesError::IncorrectSubjectKeyType);
@@ -194,7 +230,16 @@ impl Ed25519Certificates {
 
 /// A unique identifier for a device.
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
 )]
 pub struct SerialNumber([u8; 16]);
 
@@ -204,7 +249,17 @@ pub struct SerialNumber([u8; 16]);
 /// Measurement, and DHE keys are retrieved as part of the protocol. This is
 /// because the manufacturing public key should be provisioned on all sleds as
 /// the trust anchor.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum KeyType {
     /// The public key of the intermediate manufacturing cert that serves as the
     /// trust anchor for our certificate chain.
@@ -244,8 +299,10 @@ mod tests {
             msg: &[u8],
             signature: &Ed25519Signature,
         ) -> Result<(), ()> {
-            let public_key = PublicKey::from_bytes(&signer_public_key.0).unwrap();
-            let signature = ed25519::Signature::from_bytes(&signature.0).unwrap();
+            let public_key =
+                PublicKey::from_bytes(&signer_public_key.0).unwrap();
+            let signature =
+                ed25519::Signature::from_bytes(&signature.0).unwrap();
             public_key.verify_strict(msg, &signature).map_err(|_| ())?;
             Ok(())
         }
@@ -264,7 +321,8 @@ mod tests {
             &dhe_keypair,
         );
 
-        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+        let manufacturing_public_key =
+            Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
         assert!(certificates
             .validate(&manufacturing_public_key, &DalekVerifier)
             .is_ok());
@@ -286,7 +344,8 @@ mod tests {
         // Modify DHE signature so validation fails
         certificates.dhe.signature.0[0] += 1;
 
-        let manufacturing_public_key = Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
+        let manufacturing_public_key =
+            Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
         assert_eq!(
             Err(Ed25519CertificatesError::InvalidDheSig),
             certificates.validate(&manufacturing_public_key, &DalekVerifier)

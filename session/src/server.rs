@@ -9,14 +9,16 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::handshake_state::{validate_version, HandshakeState};
 use crate::msgs::{
-    ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1, HandshakeVersion, Identity,
-    IdentityVerify, ServerHello,
+    ClientHello, Finished, HandshakeMsgDataV1, HandshakeMsgV1,
+    HandshakeVersion, Identity, IdentityVerify, ServerHello,
 };
 use crate::{
-    CompletionToken, DalekVerifier, Error, HandshakeMsgVec, RecvToken, Role, SendToken, Session,
-    UserAction,
+    CompletionToken, DalekVerifier, Error, HandshakeMsgVec, RecvToken, Role,
+    SendToken, Session, UserAction,
 };
-use sprockets_common::certificates::{Ed25519Certificates, Ed25519Signature, Ed25519Verifier};
+use sprockets_common::certificates::{
+    Ed25519Certificates, Ed25519Signature, Ed25519Verifier,
+};
 use sprockets_common::msgs::{RotOp, RotResult};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
@@ -121,7 +123,11 @@ impl ServerHandshake {
             State::WaitForIdentityVerify {
                 client_identity,
                 handshake_state,
-            } => self.handle_identity_verify(client_identity, handshake_state, buf),
+            } => self.handle_identity_verify(
+                client_identity,
+                handshake_state,
+                buf,
+            ),
             State::WaitForFinished { handshake_state } => {
                 self.handle_finished(handshake_state, buf)
             }
@@ -140,7 +146,9 @@ impl ServerHandshake {
     ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
-            State::SendHello { client_hello } => self.create_hello_msg(client_hello, buf),
+            State::SendHello { client_hello } => {
+                self.create_hello_msg(client_hello, buf)
+            }
             State::SendIdentity {
                 server_nonce,
                 measurements,
@@ -157,7 +165,12 @@ impl ServerHandshake {
                 server_nonce,
                 signature,
                 handshake_state,
-            } => self.create_identity_verify_msg(server_nonce, signature, handshake_state, buf),
+            } => self.create_identity_verify_msg(
+                server_nonce,
+                signature,
+                handshake_state,
+                buf,
+            ),
             State::SendFinished {
                 server_nonce,
                 handshake_state,
@@ -174,20 +187,30 @@ impl ServerHandshake {
     /// `RotResult` from the `RotResponse`. This is useful as it allows the user
     /// to keep track of request ids for RotRequests across multiple sessions.
     /// The session code does not have to worry about this as a result.
-    pub fn handle_rot_reply(&mut self, result: RotResult) -> Result<UserAction, Error> {
+    pub fn handle_rot_reply(
+        &mut self,
+        result: RotResult,
+    ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
         match state {
             State::WaitForSignedMeasurementsFromRoT {
                 client_nonce,
                 server_nonce,
                 handshake_state,
-            } => {
-                self.handle_signed_measurements(client_nonce, server_nonce, handshake_state, result)
-            }
+            } => self.handle_signed_measurements(
+                client_nonce,
+                server_nonce,
+                handshake_state,
+                result,
+            ),
             State::WaitForSignedTranscriptFromRoT {
                 server_nonce,
                 handshake_state,
-            } => self.handle_signed_transcript(server_nonce, handshake_state, result),
+            } => self.handle_signed_transcript(
+                server_nonce,
+                handshake_state,
+                result,
+            ),
             _ => unreachable!(),
         }
     }
@@ -205,7 +228,10 @@ impl ServerHandshake {
         Session::new(hs, Sha3_256Digest(self.transcript.finalize().into()))
     }
 
-    fn handle_hello(&mut self, buf: &mut HandshakeMsgVec) -> Result<UserAction, Error> {
+    fn handle_hello(
+        &mut self,
+        buf: &mut HandshakeMsgVec,
+    ) -> Result<UserAction, Error> {
         let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
         validate_version(&msg.version)?;
         if let HandshakeMsgDataV1::ClientHello(client_hello) = msg.data {
@@ -270,7 +296,8 @@ impl ServerHandshake {
         hs: HandshakeState,
         result: RotResult,
     ) -> Result<UserAction, Error> {
-        if let RotResult::Measurements(measurements, nonce, signature) = result {
+        if let RotResult::Measurements(measurements, nonce, signature) = result
+        {
             if nonce != client_nonce {
                 return Err(Error::BadNonce);
             }
@@ -420,7 +447,8 @@ impl ServerHandshake {
 
             // Ensure measurements concatenated with the client nonce are
             // properly signed.
-            let mut signed_buf = [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
+            let mut signed_buf =
+                [0u8; Measurements::MAX_SIZE + Nonce::MAX_SIZE];
             let size = identity
                 .measurements
                 .serialize_with_nonce(&server_nonce, &mut signed_buf)?;

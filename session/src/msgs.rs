@@ -10,7 +10,9 @@ pub use hubpack::{deserialize, serialize, SerializedSize};
 use serde::{Deserialize, Serialize};
 use sprockets_common::certificates::Ed25519Certificates;
 use sprockets_common::measurements::Measurements;
-use sprockets_common::{Ed25519PublicKey, Ed25519Signature, HmacSha3_256, Nonce};
+use sprockets_common::{
+    Ed25519PublicKey, Ed25519Signature, HmacSha3_256, Nonce,
+};
 
 /// Every version of the handshake message should start with a HandshakeVersion
 ///
@@ -25,7 +27,17 @@ use sprockets_common::{Ed25519PublicKey, Ed25519Signature, HmacSha3_256, Nonce};
 /// maintaining proper ordering and keeping around old versions forever, at
 /// least as a placeholder variant. It also limits us to 256 versions based on
 /// hubpack serialization decisions.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct HandshakeVersion {
     pub version: u32,
 }
@@ -34,7 +46,17 @@ pub struct HandshakeVersion {
 ///
 /// In an Oxide rack the sled-agents send these messages to each other over the
 /// Bootsrap network.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct HandshakeMsgV1 {
     // The header for all versions of a handshake message
     pub version: HandshakeVersion,
@@ -53,7 +75,17 @@ impl HandshakeMsgV1 {
 }
 
 /// The actual message contents of HandshakeMsgV1
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub enum HandshakeMsgDataV1 {
     ClientHello(ClientHello),
     ServerHello(ServerHello),
@@ -63,7 +95,17 @@ pub enum HandshakeMsgDataV1 {
 }
 
 /// The first message sent in a secure session handshake
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct ClientHello {
     pub nonce: Nonce,
     pub public_key: Ed25519PublicKey,
@@ -71,7 +113,17 @@ pub struct ClientHello {
 
 /// The first message sent by the server in a secure session handshake.
 /// This is sent after the `ClientHello` is received.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct ServerHello {
     pub nonce: Nonce,
     pub public_key: Ed25519PublicKey,
@@ -79,7 +131,17 @@ pub struct ServerHello {
 
 /// A message containing certs and measurements, along with a measurement
 /// signature, sent by each side before that side sends any authentication messages.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Identity {
     pub certs: Ed25519Certificates,
     pub measurements: Measurements,
@@ -88,7 +150,17 @@ pub struct Identity {
 
 /// Prove to the the receiver that the sender possesses the private key
 /// corresponding to the DHE cert sent in the Identity message.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct IdentityVerify {
     pub transcript_signature: Ed25519Signature,
 }
@@ -97,7 +169,17 @@ pub struct IdentityVerify {
 ///
 /// This is the final message of a handshake from a sender. After receipt and
 /// verification of this message, the receiver trusts the sender.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, From, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    From,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
 pub struct Finished {
     pub mac: HmacSha3_256,
 }

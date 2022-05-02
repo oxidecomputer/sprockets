@@ -31,7 +31,8 @@ impl Session {
     pub fn new(hs: HandshakeState, transcript_hash: Sha3_256Digest) -> Session {
         // This "0" ikm is correct, and follows the derivation given in tls 1.3!
         let ikm = [0u8; 32];
-        let app_secret = Hkdf::<Sha3_256>::new(Some(hs.application_salt()), &ikm);
+        let app_secret =
+            Hkdf::<Sha3_256>::new(Some(hs.application_salt()), &ikm);
 
         // Generate client application traffic secret
         let mut client_app_secret = Zeroizing::new([0u8; KEY_LEN]);
@@ -41,7 +42,8 @@ impl Session {
                 client_app_secret.as_mut(),
             )
             .unwrap();
-        let client_app_secret = Hkdf::<Sha3_256>::from_prk(client_app_secret.as_ref()).unwrap();
+        let client_app_secret =
+            Hkdf::<Sha3_256>::from_prk(client_app_secret.as_ref()).unwrap();
 
         // Generate server application traffic secret
         let mut server_app_secret = Zeroizing::new([0u8; KEY_LEN]);
@@ -51,7 +53,8 @@ impl Session {
                 server_app_secret.as_mut(),
             )
             .unwrap();
-        let server_app_secret = Hkdf::<Sha3_256>::from_prk(server_app_secret.as_ref()).unwrap();
+        let server_app_secret =
+            Hkdf::<Sha3_256>::from_prk(server_app_secret.as_ref()).unwrap();
 
         // Create buffers to hold keys and IVs
         let mut client_key = Zeroizing::new([0u8; KEY_LEN]);
@@ -61,27 +64,41 @@ impl Session {
 
         // Create client key
         client_app_secret
-            .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], client_key.as_mut())
+            .expand_multi_info(
+                &[&digest_len_buf()[..], b"spr1 key"],
+                client_key.as_mut(),
+            )
             .unwrap();
 
         // Create server key
         server_app_secret
-            .expand_multi_info(&[&digest_len_buf()[..], b"spr1 key"], server_key.as_mut())
+            .expand_multi_info(
+                &[&digest_len_buf()[..], b"spr1 key"],
+                server_key.as_mut(),
+            )
             .unwrap();
 
         // Create client IV
         client_app_secret
-            .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], client_iv.as_mut())
+            .expand_multi_info(
+                &[&nonce_len_buf()[..], b"spr1 iv"],
+                client_iv.as_mut(),
+            )
             .unwrap();
 
         // Create server IV
         server_app_secret
-            .expand_multi_info(&[&nonce_len_buf()[..], b"spr1 iv"], server_iv.as_mut())
+            .expand_multi_info(
+                &[&nonce_len_buf()[..], b"spr1 iv"],
+                server_iv.as_mut(),
+            )
             .unwrap();
 
         // Initialize AEAD algorithms for client and server
-        let client_aead = ChaCha20Poly1305::new(Key::from_slice(client_key.as_ref()));
-        let server_aead = ChaCha20Poly1305::new(Key::from_slice(server_key.as_ref()));
+        let client_aead =
+            ChaCha20Poly1305::new(Key::from_slice(client_key.as_ref()));
+        let server_aead =
+            ChaCha20Poly1305::new(Key::from_slice(server_key.as_ref()));
 
         Session {
             role: hs.role(),
@@ -122,7 +139,10 @@ impl Session {
     // XOR the IV with the big-endian counter 0 padded to the left.
     //
     // The IV is 12 bytes (96 bits)
-    fn chacha20poly1305nonce(&mut self, sender_role: Role) -> chacha20poly1305::Nonce {
+    fn chacha20poly1305nonce(
+        &mut self,
+        sender_role: Role,
+    ) -> chacha20poly1305::Nonce {
         let (iv, counter) = match sender_role {
             Role::Client => (&self.client_iv, &mut self.client_nonce_counter),
             Role::Server => (&self.server_iv, &mut self.server_nonce_counter),
