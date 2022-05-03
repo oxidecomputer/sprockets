@@ -153,7 +153,6 @@ impl ChannelClient {
         // Sanity check that the completion token contains the server identity
         // we expect.
         assert_eq!(
-            // TODO is there a way to confirm the fields other than `.certs`?
             completion_token.remote_identity().certs,
             self.expected_server_certs
         );
@@ -254,7 +253,6 @@ impl ChannelServer {
         // Sanity check that the completion token contains the client identity
         // we expect.
         assert_eq!(
-            // TODO is there a way to confirm the fields other than `.certs`?
             completion_token.remote_identity().certs,
             self.expected_client_certs
         );
