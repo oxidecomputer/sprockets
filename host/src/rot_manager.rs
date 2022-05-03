@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use slog::{error, o, warn, Logger};
 use sprockets_common::msgs::{
     RotError, RotOpV1, RotRequestV1, RotResponseV1, RotResultV1,
 };
@@ -48,18 +49,24 @@ pub struct RotManager<T: RotTransport> {
     // The RotManager sends requests and receives responses over this transport
     // one at a time.
     rot_transport: T,
+
+    // A slog logger
+    logger: Logger,
 }
 
 impl<T: RotTransport> RotManager<T> {
     pub fn new(
         rot_transport: T,
+        logger: Logger,
     ) -> (RotManager<T>, mpsc::Sender<RotManagerMsg>) {
+        let logger = logger.new(o!("component" => "RotManager"));
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         (
             RotManager {
                 request_id: 0,
                 rx,
                 rot_transport,
+                logger,
             },
             tx,
         )
@@ -91,14 +98,23 @@ impl<T: RotTransport> RotManager<T> {
             id: self.request_id,
             op,
         };
+
         if let Err(e) = self.rot_transport.set_timeout(timeout) {
-            // TODO: Log real error
+            error!(
+                self.logger,
+                "Failed to set rot_transport timeout during send: {}", e
+            );
             return RotResultV1::Err(RotError::TransportError);
         }
-        if let Err(err) = self.rot_transport.send(request) {
-            // TODO: Log real error
+
+        if let Err(e) = self.rot_transport.send(request) {
+            error!(
+                self.logger,
+                "Failed to send message over rot_transport : {}", e
+            );
             return RotResultV1::Err(RotError::SendError);
         }
+
         self.recv_from_rot(start, timeout)
     }
 
@@ -111,23 +127,35 @@ impl<T: RotTransport> RotManager<T> {
             match self.rot_transport.recv() {
                 Ok(response) => {
                     if response.id != self.request_id {
-                        // TODO: Log skip?
+                        warn!(
+                          self.logger,
+                          "Received stale response over rot_transport: ";
+                            "request_id" => self.request_id,
+                            "response_id" => response.id
+                        );
+
                         // This is a stale id. Skip it, and wait some more.
                         let remaining = timeout.saturating_sub(start.elapsed());
                         if remaining == Duration::ZERO {
                             return RotResultV1::Err(RotError::Timeout);
                         }
                         if let Err(e) =
-                            // TODO: Log real error
                             self.rot_transport.set_timeout(remaining)
                         {
+                            error!(
+                                self.logger,
+                                "Failed to set rot_transport timeout during recv: {}", e
+                            );
                             return RotResultV1::Err(RotError::TransportError);
                         }
                     }
                     return response.result;
                 }
                 Err(e) => {
-                    // TODO: Log real error
+                    error!(
+                        self.logger,
+                        "Failed to receive from rot_transport: {}", e
+                    );
                     return RotResultV1::Err(RotError::RecvError);
                 }
             }
@@ -138,10 +166,19 @@ impl<T: RotTransport> RotManager<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slog::Drain;
+    use slog_term;
     use sprockets_common::{random_buf, Ed25519PublicKey};
     use sprockets_rot::{RotConfig, RotSprocket};
     use std::collections::VecDeque;
     use thiserror::Error;
+
+    fn test_logger() -> Logger {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+        slog::Logger::root(drain, o!("ctx" => "test"))
+    }
 
     fn new_rot() -> RotSprocket {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
@@ -237,7 +274,8 @@ mod tests {
 
     #[tokio::test]
     async fn successful_op() {
-        let (mut mgr, tx) = RotManager::new(TestTransport::new());
+        let (mut mgr, tx) =
+            RotManager::new(TestTransport::new(), test_logger());
         let mgr_thread = std::thread::spawn(move || mgr.run());
 
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -270,7 +308,7 @@ mod tests {
             TestTransportError::Timeout,
         ]));
 
-        let (mut mgr, tx) = RotManager::new(transport);
+        let (mut mgr, tx) = RotManager::new(transport, test_logger());
         let mgr_thread = std::thread::spawn(move || mgr.run());
 
         for i in 0..3 {
