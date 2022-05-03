@@ -11,7 +11,7 @@ use ed25519;
 use ed25519_dalek;
 pub use hubpack::{deserialize, serialize, SerializedSize};
 use sprockets_common::certificates::Ed25519Verifier;
-use sprockets_common::msgs::RotOp;
+use sprockets_common::msgs::RotOpV1;
 use sprockets_common::{Ed25519PublicKey, Ed25519Signature};
 
 mod client;
@@ -124,7 +124,7 @@ pub enum UserAction {
 
     /// The user should send the included `RotRequest` to the RoT and then call
     /// `handle_rot_result` with the reply received from the RoT.
-    SendToRot(RotOp),
+    SendToRot(RotOpV1),
 
     /// The handshake is complete and the user should call the `new_session`
     /// method to get back a `Session` object that can be used to encrypt

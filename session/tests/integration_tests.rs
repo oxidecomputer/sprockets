@@ -8,7 +8,7 @@ use std::thread;
 
 use salty;
 
-use sprockets_common::msgs::{RotRequest, RotResponse};
+use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use sprockets_common::{random_buf, Ed25519PublicKey};
 use sprockets_rot::{RotConfig, RotSprocket};
 use sprockets_session::{
@@ -120,10 +120,17 @@ impl ChannelClient {
                     next_action
                 }
                 UserAction::SendToRot(op) => {
-                    let req = RotRequest::V1 { id: req_id, op };
+                    let req = RotRequestV1 {
+                        version: 1,
+                        id: req_id,
+                        op,
+                    };
                     // This is a test, don't bother with serialization
-                    let RotResponse::V1 { id, result } =
-                        self.rot.handle_deserialized(req).unwrap();
+                    let RotResponseV1 {
+                        version: _,
+                        id,
+                        result,
+                    } = self.rot.handle_deserialized(req).unwrap();
                     assert_eq!(id, req_id);
                     req_id += 1;
                     hs.handle_rot_reply(result).unwrap()
@@ -205,10 +212,17 @@ impl ChannelServer {
                     next_action
                 }
                 UserAction::SendToRot(op) => {
-                    let req = RotRequest::V1 { id: req_id, op };
+                    let req = RotRequestV1 {
+                        version: 1,
+                        id: req_id,
+                        op,
+                    };
                     // This is a test, don't bother with serialization
-                    let RotResponse::V1 { id, result } =
-                        self.rot.handle_deserialized(req).unwrap();
+                    let RotResponseV1 {
+                        version: _,
+                        id,
+                        result,
+                    } = self.rot.handle_deserialized(req).unwrap();
                     assert_eq!(id, req_id);
                     req_id += 1;
                     hs.handle_rot_reply(result).unwrap()

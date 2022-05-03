@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use clap::Parser;
-use sprockets_common::msgs::{RotOp, RotRequest};
+use sprockets_common::msgs::{RotOpV1, RotRequestV1};
 use sprockets_common::Nonce;
 use sprockets_host::Uart;
 
@@ -32,10 +32,14 @@ fn main() -> anyhow::Result<()> {
     let mut uart = Uart::attach(&args.path, args.baud_rate)?;
 
     let op = match args.op {
-        Op::GetCertificates => RotOp::GetCertificates,
-        Op::GetMeasurements => RotOp::GetMeasurements(Nonce::new()),
+        Op::GetCertificates => RotOpV1::GetCertificates,
+        Op::GetMeasurements => RotOpV1::GetMeasurements(Nonce::new()),
     };
-    let req = RotRequest::V1 { id: 1, op };
+    let req = RotRequestV1 {
+        version: 1,
+        id: 1,
+        op,
+    };
 
     uart.send(req)?;
     let rsp = uart.recv()?;
