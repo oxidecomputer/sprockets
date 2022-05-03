@@ -22,14 +22,12 @@ use sprockets_common::certificates::{
 use sprockets_common::msgs::{RotOpV1, RotResultV1};
 use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 
-// The current state of the handshake state machine during the first half of the
-// handshake (client acquiring trust in server).
+// The current state of the handshake state machine
 //
 // Each state has different data associated with it.
 //
 // The states are transitioned in the order listed. No state is ever skipped.
-// After the final state, we transition to `StateClientAuth`.
-enum StateIdentifyingServer {
+enum State {
     Hello {
         client_nonce: Nonce,
         secret: EphemeralSecret,
@@ -45,21 +43,9 @@ enum StateIdentifyingServer {
         handshake_state: HandshakeState,
     },
     WaitForFinished {
-        server_identity: Identity,
         server_nonce: Nonce,
         handshake_state: HandshakeState,
     },
-}
-
-// The current state of the handshake state machine during the second half of
-// the handshake (server acquiring trust in client).
-//
-// Each state has different data associated with it.
-//
-// The states are transitioned in the order listed after we have progressed
-// through `StateIdentifyingServer`. After the final state, we transition to
-// `State::Complete`. No state is ever skipped.
-enum StateIdentifyingClient {
     WaitForSignedMeasurementsFromRoT {
         server_nonce: Nonce,
         handshake_state: HandshakeState,
@@ -79,37 +65,9 @@ enum StateIdentifyingClient {
     SendFinished {
         handshake_state: HandshakeState,
     },
-}
-
-enum State {
-    IdentifyingServer(StateIdentifyingServer),
-    // The `Identity` here is the server_identity we verified while we were in
-    // the `IdentifyingServer` state; we carry it forward to populate in the
-    // `CompletionToken` we eventually return.
-    IdentifyingClient(Identity, StateIdentifyingClient),
-    Complete(HandshakeState),
-}
-
-// Based on the tokens we return to our caller, we always know which `State` we
-// expect to be in; add unwrapping methods to drill down into each state.
-impl State {
-    fn unwrap_as_server_auth(self) -> StateIdentifyingServer {
-        match self {
-            State::IdentifyingServer(state) => state,
-            State::IdentifyingClient(_, _) | State::Complete(_) => {
-                unreachable!()
-            }
-        }
-    }
-
-    fn unwrap_as_client_auth(self) -> (Identity, StateIdentifyingClient) {
-        match self {
-            State::IdentifyingClient(server_identity, state) => {
-                (server_identity, state)
-            }
-            State::IdentifyingServer(_) | State::Complete(_) => unreachable!(),
-        }
-    }
+    Complete {
+        handshake_state: HandshakeState,
+    },
 }
 
 /// The client side of a secure session handshake
@@ -117,6 +75,9 @@ pub struct ClientHandshake {
     manufacturing_public_key: Ed25519PublicKey,
     client_certs: Ed25519Certificates,
     transcript: Sha3_256,
+    // we don't know the server identity when we're created, but once we get it
+    // we have to hold it until we return it in the `CompletionToken`
+    server_identity: Option<Identity>,
     // Must be an option to allow moving out of the type when switching between
     // states.
     state: Option<State>,
@@ -137,10 +98,10 @@ impl ClientHandshake {
 
         let client_nonce = Nonce::new();
 
-        let state = State::IdentifyingServer(StateIdentifyingServer::Hello {
+        let state = State::Hello {
             secret,
             client_nonce,
-        });
+        };
 
         let msg = HandshakeMsgV1::new(
             ClientHello {
@@ -158,6 +119,7 @@ impl ClientHandshake {
             manufacturing_public_key,
             client_certs,
             transcript,
+            server_identity: None,
             state: Some(state),
         };
 
@@ -174,12 +136,12 @@ impl ClientHandshake {
         _token: RecvToken,
     ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
-        match state.unwrap_as_server_auth() {
-            StateIdentifyingServer::Hello {
+        match state {
+            State::Hello {
                 client_nonce,
                 secret,
             } => self.handle_hello(client_nonce, secret, buf),
-            StateIdentifyingServer::WaitForIdentity {
+            State::WaitForIdentity {
                 client_nonce,
                 server_nonce,
                 handshake_state,
@@ -189,7 +151,7 @@ impl ClientHandshake {
                 handshake_state,
                 buf,
             ),
-            StateIdentifyingServer::WaitForIdentityVerify {
+            State::WaitForIdentityVerify {
                 server_identity,
                 server_nonce,
                 handshake_state,
@@ -199,16 +161,11 @@ impl ClientHandshake {
                 handshake_state,
                 buf,
             ),
-            StateIdentifyingServer::WaitForFinished {
-                server_identity,
+            State::WaitForFinished {
                 server_nonce,
                 handshake_state,
-            } => self.handle_finished(
-                server_identity,
-                server_nonce,
-                handshake_state,
-                buf,
-            ),
+            } => self.handle_finished(server_nonce, handshake_state, buf),
+            _ => unreachable!(),
         }
     }
 
@@ -224,25 +181,19 @@ impl ClientHandshake {
         &mut self,
         result: RotResultV1,
     ) -> Result<UserAction, Error> {
-        let (server_identity, state) =
-            self.state.take().unwrap().unwrap_as_client_auth();
+        let state = self.state.take().unwrap();
         match state {
-            StateIdentifyingClient::WaitForSignedMeasurementsFromRoT {
+            State::WaitForSignedMeasurementsFromRoT {
                 server_nonce,
                 handshake_state,
             } => self.handle_signed_measurements(
-                server_identity,
                 server_nonce,
                 handshake_state,
                 result,
             ),
-            StateIdentifyingClient::WaitForSignedTranscriptFromRoT {
-                handshake_state,
-            } => self.handle_signed_transcript(
-                server_identity,
-                handshake_state,
-                result,
-            ),
+            State::WaitForSignedTranscriptFromRoT { handshake_state } => {
+                self.handle_signed_transcript(handshake_state, result)
+            }
             _ => unreachable!(),
         }
     }
@@ -256,31 +207,26 @@ impl ClientHandshake {
         buf: &mut HandshakeMsgVec,
         _token: SendToken,
     ) -> Result<UserAction, Error> {
-        let (server_identity, state) =
-            self.state.take().unwrap().unwrap_as_client_auth();
+        let state = self.state.take().unwrap();
         match state {
-            StateIdentifyingClient::SendIdentity {
+            State::SendIdentity {
                 measurements,
                 signature,
                 handshake_state,
             } => self.create_identity_msg(
-                server_identity,
                 measurements,
                 signature,
                 handshake_state,
                 buf,
             ),
-            StateIdentifyingClient::SendIdentityVerify {
+            State::SendIdentityVerify {
                 signature,
                 handshake_state,
-            } => self.create_identity_verify_msg(
-                server_identity,
-                signature,
-                handshake_state,
-                buf,
-            ),
-            StateIdentifyingClient::SendFinished { handshake_state } => {
-                self.create_finished_msg(server_identity, handshake_state, buf)
+            } => {
+                self.create_identity_verify_msg(signature, handshake_state, buf)
+            }
+            State::SendFinished { handshake_state } => {
+                self.create_finished_msg(handshake_state, buf)
             }
             _ => unreachable!(),
         }
@@ -293,7 +239,7 @@ impl ClientHandshake {
     // handshake completes.
     pub fn new_session(self, _: CompletionToken) -> Session {
         let hs = match self.state.unwrap() {
-            State::Complete(handshake_state) => handshake_state,
+            State::Complete { handshake_state } => handshake_state,
             _ => unreachable!(),
         };
         Session::new(hs, Sha3_256Digest(self.transcript.finalize().into()))
@@ -301,7 +247,6 @@ impl ClientHandshake {
 
     fn handle_signed_measurements(
         &mut self,
-        server_identity: Identity,
         server_nonce: Nonce,
         hs: HandshakeState,
         result: RotResultV1,
@@ -313,14 +258,11 @@ impl ClientHandshake {
                 return Err(Error::BadNonce);
             }
             // Transition to the next state
-            self.state = Some(State::IdentifyingClient(
-                server_identity,
-                StateIdentifyingClient::SendIdentity {
-                    measurements,
-                    signature,
-                    handshake_state: hs,
-                },
-            ));
+            self.state = Some(State::SendIdentity {
+                measurements,
+                signature,
+                handshake_state: hs,
+            });
             Ok(SendToken::new().into())
         } else {
             Err(Error::UnexpecteRotMsg)
@@ -329,19 +271,15 @@ impl ClientHandshake {
 
     fn handle_signed_transcript(
         &mut self,
-        server_identity: Identity,
         hs: HandshakeState,
         result: RotResultV1,
     ) -> Result<UserAction, Error> {
         if let RotResultV1::SignedTranscript(signature) = result {
             // Transition to the next state
-            self.state = Some(State::IdentifyingClient(
-                server_identity,
-                StateIdentifyingClient::SendIdentityVerify {
-                    signature,
-                    handshake_state: hs,
-                },
-            ));
+            self.state = Some(State::SendIdentityVerify {
+                signature,
+                handshake_state: hs,
+            });
             Ok(SendToken::new().into())
         } else {
             Err(Error::UnexpecteRotMsg)
@@ -350,7 +288,6 @@ impl ClientHandshake {
 
     fn create_identity_msg(
         &mut self,
-        server_identity: Identity,
         measurements: Measurements,
         measurements_sig: Ed25519Signature,
         mut hs: HandshakeState,
@@ -369,12 +306,9 @@ impl ClientHandshake {
         hs.encrypt(buf)?;
 
         // Transition to the next state
-        self.state = Some(State::IdentifyingClient(
-            server_identity,
-            StateIdentifyingClient::WaitForSignedTranscriptFromRoT {
-                handshake_state: hs,
-            },
-        ));
+        self.state = Some(State::WaitForSignedTranscriptFromRoT {
+            handshake_state: hs,
+        });
 
         // We clone so we can use the intermediate hash value but maintain
         // the running hash computation.
@@ -389,7 +323,6 @@ impl ClientHandshake {
 
     fn create_identity_verify_msg(
         &mut self,
-        server_identity: Identity,
         transcript_signature: Ed25519Signature,
         mut hs: HandshakeState,
         buf: &mut HandshakeMsgVec,
@@ -405,19 +338,15 @@ impl ClientHandshake {
         hs.encrypt(buf)?;
 
         // Transition to the next state
-        self.state = Some(State::IdentifyingClient(
-            server_identity,
-            StateIdentifyingClient::SendFinished {
-                handshake_state: hs,
-            },
-        ));
+        self.state = Some(State::SendFinished {
+            handshake_state: hs,
+        });
 
         Ok(SendToken::new().into())
     }
 
     fn create_finished_msg(
         &mut self,
-        server_identity: Identity,
         mut hs: HandshakeState,
         buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
@@ -442,8 +371,14 @@ impl ClientHandshake {
         hs.encrypt(buf)?;
 
         // Transition to the next state
-        self.state = Some(State::Complete(hs));
+        self.state = Some(State::Complete {
+            handshake_state: hs,
+        });
 
+        // we received and verified the server identity in
+        // `handle_identity_verify()`, at which point we stashed it in
+        // `self.server_identity`, making it safe to unwrap here.
+        let server_identity = self.server_identity.take().unwrap();
         Ok(CompletionToken::new(server_identity).into())
     }
 
@@ -469,13 +404,11 @@ impl ClientHandshake {
             );
 
             // Transition to the next state
-            self.state = Some(State::IdentifyingServer(
-                StateIdentifyingServer::WaitForIdentity {
-                    client_nonce,
-                    server_nonce: hello.nonce,
-                    handshake_state,
-                },
-            ));
+            self.state = Some(State::WaitForIdentity {
+                client_nonce,
+                server_nonce: hello.nonce,
+                handshake_state,
+            });
             Ok(RecvToken::new().into())
         } else {
             Err(Error::UnexpectedMsg)
@@ -515,13 +448,11 @@ impl ClientHandshake {
                 .map_err(|_| Error::BadMeasurementsSig)?;
 
             // Transition to the next state
-            self.state = Some(State::IdentifyingServer(
-                StateIdentifyingServer::WaitForIdentityVerify {
-                    server_identity: identity,
-                    server_nonce,
-                    handshake_state: hs,
-                },
-            ));
+            self.state = Some(State::WaitForIdentityVerify {
+                server_identity: identity,
+                server_nonce,
+                handshake_state: hs,
+            });
 
             Ok(RecvToken::new().into())
         } else {
@@ -557,13 +488,13 @@ impl ClientHandshake {
                 .map_err(|_| Error::BadTranscriptSig)?;
 
             // Transition to the next state
-            self.state = Some(State::IdentifyingServer(
-                StateIdentifyingServer::WaitForFinished {
-                    server_identity,
-                    server_nonce,
-                    handshake_state: hs,
-                },
-            ));
+            self.state = Some(State::WaitForFinished {
+                server_nonce,
+                handshake_state: hs,
+            });
+
+            // Save the server_identity for constructing a `CompletionToken`
+            self.server_identity = Some(server_identity);
 
             Ok(RecvToken::new().into())
         } else {
@@ -573,7 +504,6 @@ impl ClientHandshake {
 
     fn handle_finished(
         &mut self,
-        server_identity: Identity,
         server_nonce: Nonce,
         mut hs: HandshakeState,
         buf: &mut HandshakeMsgVec,
@@ -593,13 +523,10 @@ impl ClientHandshake {
             hs.verify_finished_mac(&finished.mac.0, &transcript_hash)?;
 
             // Transition to the next state
-            self.state = Some(State::IdentifyingClient(
-                server_identity,
-                StateIdentifyingClient::WaitForSignedMeasurementsFromRoT {
-                    server_nonce: server_nonce.clone(),
-                    handshake_state: hs,
-                },
-            ));
+            self.state = Some(State::WaitForSignedMeasurementsFromRoT {
+                server_nonce: server_nonce.clone(),
+                handshake_state: hs,
+            });
 
             Ok(RotOpV1::GetMeasurements(server_nonce).into())
         } else {
