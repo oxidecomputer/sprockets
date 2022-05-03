@@ -8,6 +8,7 @@ use std::thread;
 
 use salty;
 
+use sprockets_common::certificates::Ed25519Certificates;
 use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use sprockets_common::{random_buf, Ed25519PublicKey};
 use sprockets_rot::{RotConfig, RotSprocket};
@@ -35,6 +36,8 @@ fn bootstrap() -> (
     ));
     let (client_tx, server_rx) = mpsc::channel();
     let (server_tx, client_rx) = mpsc::channel();
+    let expected_client_certs = client_rot.get_certificates();
+    let expected_server_certs = server_rot.get_certificates();
 
     let mut client_hello_buf = HandshakeMsgVec::new();
     client_hello_buf
@@ -45,10 +48,12 @@ fn bootstrap() -> (
         client_rot.get_certificates(),
         &mut client_hello_buf,
     );
+
     let client = ChannelClient {
         rot: client_rot,
         tx: client_tx,
         rx: client_rx,
+        expected_server_certs,
         hs: Some(client_hs),
     };
 
@@ -60,6 +65,7 @@ fn bootstrap() -> (
         rot: server_rot,
         tx: server_tx,
         rx: server_rx,
+        expected_client_certs,
         hs: Some(server_hs),
     };
 
@@ -77,6 +83,7 @@ struct ChannelClient {
     rot: RotSprocket,
     tx: Sender<HandshakeMsgVec>,
     rx: Receiver<HandshakeMsgVec>,
+    expected_server_certs: Ed25519Certificates,
 
     // We start with a handshake, and then transition to a session upon
     // handshake completion
@@ -143,6 +150,14 @@ impl ChannelClient {
 
         println!("Client handshake complete");
 
+        // Sanity check that the completion token contains the server identity
+        // we expect.
+        assert_eq!(
+            // TODO is there a way to confirm the fields other than `.certs`?
+            completion_token.remote_identity().certs,
+            self.expected_server_certs
+        );
+
         // Handshake is complete. Transition to a session object so we can send
         // and receive application level messages.
         let mut session = hs.new_session(completion_token);
@@ -171,6 +186,7 @@ struct ChannelServer {
     rot: RotSprocket,
     tx: Sender<HandshakeMsgVec>,
     rx: Receiver<HandshakeMsgVec>,
+    expected_client_certs: Ed25519Certificates,
 
     // We start with a handshake, and then transition to a session upon
     // handshake completion
@@ -234,6 +250,14 @@ impl ChannelServer {
         };
 
         println!("Server handshake complete");
+
+        // Sanity check that the completion token contains the client identity
+        // we expect.
+        assert_eq!(
+            // TODO is there a way to confirm the fields other than `.certs`?
+            completion_token.remote_identity().certs,
+            self.expected_client_certs
+        );
 
         let mut session = hs.new_session(completion_token);
 
