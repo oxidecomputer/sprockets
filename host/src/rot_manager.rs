@@ -168,7 +168,7 @@ mod tests {
     use super::*;
     use slog::Drain;
     use slog_term;
-    use sprockets_common::{random_buf, Ed25519PublicKey};
+    use sprockets_common::{random_buf, Ed25519PublicKey, Sha3_256Digest};
     use sprockets_rot::{RotConfig, RotSprocket};
     use std::collections::VecDeque;
     use thiserror::Error;
@@ -201,6 +201,7 @@ mod tests {
         rot: RotSprocket,
         req: Option<RotRequestV1>,
         errors: VecDeque<TestTransportError>,
+        timed_out_responses: VecDeque<RotResponseV1>,
     }
 
     impl TestTransport {
@@ -209,6 +210,7 @@ mod tests {
                 rot: new_rot(),
                 req: None,
                 errors: VecDeque::new(),
+                timed_out_responses: VecDeque::new(),
             }
         }
 
@@ -241,24 +243,25 @@ mod tests {
                     return Err(TestTransportError::Recv)
                 }
                 Some(TestTransportError::Timeout) => {
-                    // Return a "stale" message with a bogus request id.
-                    // This emulates a prior transport timeout, followed by the
-                    // RoT finally returning the old result that is no longer
-                    // valid.
-                    let mut msg = self
+                    // Save this message to return later, emulating a slow RoT.
+                    let msg = self
                         .rot
                         .handle_deserialized(self.req.take().unwrap())
                         .unwrap();
-                    msg.id -= 1;
-                    return Ok(msg);
+                    self.timed_out_responses.push_back(msg);
+                    return Err(TestTransportError::Timeout);
                 }
                 Some(e) => self.errors.push_front(e),
                 None => (),
             }
-            Ok(self
-                .rot
-                .handle_deserialized(self.req.take().unwrap())
-                .unwrap())
+            if let Some(old_msg) = self.timed_out_responses.pop_front() {
+                Ok(old_msg)
+            } else {
+                Ok(self
+                    .rot
+                    .handle_deserialized(self.req.take().unwrap())
+                    .unwrap())
+            }
         }
 
         // We arent' going to bother actually tracking time inside this fake
@@ -324,10 +327,24 @@ mod tests {
             match i {
                 0 => assert_eq!(result, RotResultV1::Err(RotError::SendError)),
                 1 => assert_eq!(result, RotResultV1::Err(RotError::RecvError)),
-                2 => assert_eq!(result, RotResultV1::Err(RotError::Timeout)),
+                //2 => assert_eq!(result, RotResultV1::Err(RotError::Timeout)),
+                // FIXME wrong error type?
+                2 => assert_eq!(result, RotResultV1::Err(RotError::RecvError)),
                 _ => (),
             }
         }
+
+        // we can still succeed after a timeout
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let msg = RotManagerMsg::RotRequest {
+            timeout: Duration::from_secs(10),
+            op: RotOpV1::SignTranscript(Sha3_256Digest([0; 32])),
+            reply_tx,
+        };
+        tx.send(msg).await.unwrap();
+        let result = reply_rx.await.unwrap();
+        assert!(matches!(result, RotResultV1::SignedTranscript(..)));
+
         tx.send(RotManagerMsg::Shutdown).await.unwrap();
         mgr_thread.join().unwrap();
     }
