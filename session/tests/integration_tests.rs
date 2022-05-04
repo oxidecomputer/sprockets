@@ -8,7 +8,7 @@ use std::thread;
 
 use salty;
 
-use sprockets_common::certificates::Ed25519Certificates;
+use sprockets_common::certificates::{Ed25519Certificates, SerialNumber};
 use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use sprockets_common::{random_buf, Ed25519PublicKey};
 use sprockets_rot::{RotConfig, RotSprocket};
@@ -30,9 +30,13 @@ fn bootstrap() -> (
         Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
     let client_rot = RotSprocket::new(RotConfig::bootstrap_for_testing(
         &manufacturing_keypair,
+        salty::Keypair::from(&random_buf()),
+        SerialNumber(random_buf()),
     ));
     let server_rot = RotSprocket::new(RotConfig::bootstrap_for_testing(
         &manufacturing_keypair,
+        salty::Keypair::from(&random_buf()),
+        SerialNumber(random_buf()),
     ));
     let (client_tx, server_rx) = mpsc::channel();
     let (server_tx, client_rx) = mpsc::channel();
@@ -40,9 +44,6 @@ fn bootstrap() -> (
     let expected_server_certs = server_rot.get_certificates();
 
     let mut client_hello_buf = HandshakeMsgVec::new();
-    client_hello_buf
-        .resize_default(client_hello_buf.capacity())
-        .unwrap();
     let (client_hs, client_recv_token) = ClientHandshake::init(
         manufacturing_public_key.clone(),
         client_rot.get_certificates(),
@@ -117,7 +118,6 @@ impl ChannelClient {
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
                     let mut msg = HandshakeMsgVec::new();
-                    msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
                     let next_action =
@@ -217,7 +217,6 @@ impl ChannelServer {
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
                     let mut msg = HandshakeMsgVec::new();
-                    msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
                     let next_action =

@@ -149,6 +149,7 @@ impl ServerHandshake {
         _token: SendToken,
     ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
+        buf.resize_default(buf.capacity()).unwrap();
         match state {
             State::SendHello { client_hello } => {
                 self.create_hello_msg(client_hello, buf)

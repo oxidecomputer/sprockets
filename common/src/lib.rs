@@ -108,14 +108,14 @@ impl Nonce {
 // TODO: If we are actually using this to generate a secret key it should
 // probably use zeroize
 #[cfg(feature = "rand")]
-pub fn random_buf() -> [u8; 32] {
-    let mut data = [0u8; 32];
+pub fn random_buf<const T: usize>() -> [u8; T] {
+    let mut data = [0u8; T];
     OsRng.fill_bytes(&mut data);
     data
 }
 
 // This is temporary until I use Phil's hardware drivers
 #[cfg(not(feature = "rand"))]
-pub fn random_buf() -> [u8; 32] {
-    [0u8; 32]
+pub fn random_buf<const T: usize>() -> [u8; T] {
+    [0u8; T]
 }
