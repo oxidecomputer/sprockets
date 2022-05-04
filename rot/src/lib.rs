@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), no_std)]
 
 use sprockets_common::certificates::{
-    Ed25519Certificates, Ed25519PublicKey, Ed25519Signature,
+    Ed25519Certificates, Ed25519PublicKey, Ed25519Signature, SerialNumber,
 };
 use sprockets_common::measurements::{
     HbsMeasurements, Measurements, RotMeasurements, SpMeasurements,
@@ -17,7 +17,9 @@ use sprockets_common::msgs::*;
 use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
 
 use hubpack::{deserialize, serialize};
-use salty;
+
+pub use salty;
+pub use sprockets_common as common;
 
 /// A key management and measurement service run on the RoT
 pub struct RotSprocket {
@@ -139,13 +141,15 @@ impl RotConfig {
     // the code on the RoT and Host.
     pub fn bootstrap_for_testing(
         manufacturing_keypair: &salty::Keypair,
+        device_id_keypair: salty::Keypair,
+        serial_number: SerialNumber,
     ) -> RotConfig {
-        let device_id_keypair = salty::Keypair::from(&random_buf());
         let measurement_keypair = salty::Keypair::from(&random_buf());
         let dhe_keypair = salty::Keypair::from(&random_buf());
         let certificates = Ed25519Certificates::bootstrap_for_testing(
             manufacturing_keypair,
             &device_id_keypair,
+            serial_number,
             &measurement_keypair,
             &dhe_keypair,
         );
@@ -184,7 +188,11 @@ mod tests {
     #[test]
     fn test_get_certificates() {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
-        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
+        let config = RotConfig::bootstrap_for_testing(
+            &manufacturing_keypair,
+            salty::Keypair::from(&random_buf()),
+            SerialNumber(random_buf()),
+        );
         let expected_certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let req = RotRequestV1 {
@@ -211,7 +219,11 @@ mod tests {
     #[test]
     fn test_measurements() {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
-        let config = RotConfig::bootstrap_for_testing(&manufacturing_keypair);
+        let config = RotConfig::bootstrap_for_testing(
+            &manufacturing_keypair,
+            salty::Keypair::from(&random_buf()),
+            SerialNumber(random_buf()),
+        );
         let certificates = config.certificates.clone();
         let mut rot = RotSprocket::new(config);
         let nonce = Nonce::new();
