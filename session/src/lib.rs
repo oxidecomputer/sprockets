@@ -10,6 +10,7 @@ use derive_more::From;
 use ed25519;
 use ed25519_dalek;
 pub use hubpack::{deserialize, serialize, SerializedSize};
+use msgs::Identity;
 use sprockets_common::certificates::Ed25519Verifier;
 use sprockets_common::msgs::RotOpV1;
 use sprockets_common::{Ed25519PublicKey, Ed25519Signature};
@@ -102,11 +103,19 @@ impl SendToken {
 
 /// A token that allows calling the `new_session` method of a `ClientHandshake`
 #[derive(Debug)]
-pub struct CompletionToken(usize);
+pub struct CompletionToken(Identity);
 
 impl CompletionToken {
-    fn new() -> CompletionToken {
-        CompletionToken(0)
+    fn new(remote_identity: Identity) -> CompletionToken {
+        CompletionToken(remote_identity)
+    }
+
+    /// Retrieve the remote identity that was verified during the handshake.
+    ///
+    /// If we were the client, this is the identity of the server (and vice
+    /// versa).
+    pub fn remote_identity(&self) -> &Identity {
+        &self.0
     }
 }
 

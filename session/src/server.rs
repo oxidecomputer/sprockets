@@ -77,6 +77,9 @@ pub struct ServerHandshake {
     manufacturing_public_key: Ed25519PublicKey,
     server_certs: Ed25519Certificates,
     transcript: Sha3_256,
+    // We don't know the client identity when we're created, but once we get it
+    // we have to hold it until we return it in the `CompletionToken`.
+    client_identity: Option<Identity>,
     // Must be an option to allow moving out of the type when switching between
     // states.
     state: Option<State>,
@@ -98,6 +101,7 @@ impl ServerHandshake {
                 manufacturing_public_key,
                 server_certs,
                 transcript,
+                client_identity: None,
                 state,
             },
             RecvToken::new(),
@@ -505,6 +509,9 @@ impl ServerHandshake {
                 handshake_state: hs,
             });
 
+            // Save the client identity for constructing a `CompletionToken`
+            self.client_identity = Some(client_identity);
+
             Ok(RecvToken::new().into())
         } else {
             Err(Error::UnexpectedMsg)
@@ -535,7 +542,11 @@ impl ServerHandshake {
                 handshake_state: hs,
             });
 
-            Ok(CompletionToken::new().into())
+            // We received and verified the server identity in
+            // `handle_identity_verify()`, at which point we stashed it in
+            // `self.client_identity`, making it safe to unwrap here.
+            let client_identity = self.client_identity.take().unwrap();
+            Ok(CompletionToken::new(client_identity).into())
         } else {
             Err(Error::UnexpectedMsg)
         }
