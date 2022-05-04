@@ -52,10 +52,10 @@ impl Ed25519Certificates {
     pub fn bootstrap_for_testing(
         manufacturing_keypair: &salty::Keypair,
         device_id_keypair: &salty::Keypair,
+        serial_number: SerialNumber,
         measurement_keypair: &salty::Keypair,
         dhe_keypair: &salty::Keypair,
     ) -> Ed25519Certificates {
-        let serial_number = SerialNumber([0x1d; 16]);
         let device_id_public_key =
             Ed25519PublicKey(device_id_keypair.public.to_bytes());
         let device_id = Ed25519Certificate {
@@ -241,7 +241,7 @@ impl Ed25519Certificates {
     Deserialize,
     SerializedSize,
 )]
-pub struct SerialNumber([u8; 16]);
+pub struct SerialNumber(pub [u8; 16]);
 
 /// The different types of public keys managed by the RoT.
 ///
@@ -284,8 +284,8 @@ mod tests {
     use ed25519_dalek::PublicKey;
     use rand::{rngs::OsRng, RngCore};
 
-    pub fn random_buf() -> [u8; 32] {
-        let mut data = [0u8; 32];
+    pub fn random_buf<const T: usize>() -> [u8; T] {
+        let mut data = [0u8; T];
         OsRng.fill_bytes(&mut data);
         data
     }
@@ -317,6 +317,7 @@ mod tests {
         let certificates = Ed25519Certificates::bootstrap_for_testing(
             &manufacturing_keypair,
             &device_id_keypair,
+            SerialNumber(random_buf()),
             &measurement_keypair,
             &dhe_keypair,
         );
@@ -337,6 +338,7 @@ mod tests {
         let mut certificates = Ed25519Certificates::bootstrap_for_testing(
             &manufacturing_keypair,
             &device_id_keypair,
+            SerialNumber(random_buf()),
             &measurement_keypair,
             &dhe_keypair,
         );

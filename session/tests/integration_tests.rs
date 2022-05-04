@@ -8,7 +8,7 @@ use std::thread;
 
 use salty;
 
-use sprockets_common::certificates::Ed25519Certificates;
+use sprockets_common::certificates::{Ed25519Certificates, SerialNumber};
 use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use sprockets_common::{random_buf, Ed25519PublicKey};
 use sprockets_rot::{RotConfig, RotSprocket};
@@ -30,9 +30,13 @@ fn bootstrap() -> (
         Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
     let client_rot = RotSprocket::new(RotConfig::bootstrap_for_testing(
         &manufacturing_keypair,
+        salty::Keypair::from(&random_buf()),
+        SerialNumber(random_buf()),
     ));
     let server_rot = RotSprocket::new(RotConfig::bootstrap_for_testing(
         &manufacturing_keypair,
+        salty::Keypair::from(&random_buf()),
+        SerialNumber(random_buf()),
     ));
     let (client_tx, server_rx) = mpsc::channel();
     let (server_tx, client_rx) = mpsc::channel();
