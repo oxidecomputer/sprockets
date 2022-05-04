@@ -17,7 +17,9 @@ use sprockets_common::msgs::*;
 use sprockets_common::{random_buf, Nonce, Sha3_256Digest};
 
 use hubpack::{deserialize, serialize};
-use salty;
+
+pub use salty;
+pub use sprockets_common as common;
 
 /// A key management and measurement service run on the RoT
 pub struct RotSprocket {
