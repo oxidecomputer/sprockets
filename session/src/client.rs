@@ -112,6 +112,7 @@ impl ClientHandshake {
         );
 
         let mut transcript = Sha3_256::new();
+        buf.resize_default(buf.capacity()).unwrap();
         HandshakeState::serialize(msg, buf).unwrap();
         transcript.update(&buf);
 
@@ -208,6 +209,7 @@ impl ClientHandshake {
         _token: SendToken,
     ) -> Result<UserAction, Error> {
         let state = self.state.take().unwrap();
+        buf.resize_default(buf.capacity()).unwrap();
         match state {
             State::SendIdentity {
                 measurements,

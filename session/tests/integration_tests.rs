@@ -44,9 +44,6 @@ fn bootstrap() -> (
     let expected_server_certs = server_rot.get_certificates();
 
     let mut client_hello_buf = HandshakeMsgVec::new();
-    client_hello_buf
-        .resize_default(client_hello_buf.capacity())
-        .unwrap();
     let (client_hs, client_recv_token) = ClientHandshake::init(
         manufacturing_public_key.clone(),
         client_rot.get_certificates(),
@@ -121,7 +118,6 @@ impl ChannelClient {
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
                     let mut msg = HandshakeMsgVec::new();
-                    msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
                     let next_action =
@@ -221,7 +217,6 @@ impl ChannelServer {
                 UserAction::Send(token) => {
                     // Create a buffer to hold the message
                     let mut msg = HandshakeMsgVec::new();
-                    msg.resize_default(msg.capacity()).unwrap();
 
                     // Fill in the msg to send and get the next action to take
                     let next_action =
