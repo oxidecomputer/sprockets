@@ -75,8 +75,8 @@ pub struct ClientHandshake {
     manufacturing_public_key: Ed25519PublicKey,
     client_certs: Ed25519Certificates,
     transcript: Sha3_256,
-    // we don't know the server identity when we're created, but once we get it
-    // we have to hold it until we return it in the `CompletionToken`
+    // We don't know the server identity when we're created, but once we get it
+    // we have to hold it until we return it in the `CompletionToken`.
     server_identity: Option<Identity>,
     // Must be an option to allow moving out of the type when switching between
     // states.
@@ -375,7 +375,7 @@ impl ClientHandshake {
             handshake_state: hs,
         });
 
-        // we received and verified the server identity in
+        // We received and verified the server identity in
         // `handle_identity_verify()`, at which point we stashed it in
         // `self.server_identity`, making it safe to unwrap here.
         let server_identity = self.server_identity.take().unwrap();
