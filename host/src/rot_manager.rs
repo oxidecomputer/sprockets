@@ -2,34 +2,91 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use slog::{error, o, warn, Logger};
 use sprockets_common::msgs::{
-    RotError, RotOpV1, RotRequestV1, RotResponseV1, RotResultV1,
+    RotOpV1, RotRequestV1, RotResponseV1, RotResultV1,
 };
+use std::error::Error;
+use std::fmt::Debug;
+use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
-// One slot for each sled in a rack
-const CHANNEL_CAPACITY: usize = 32;
-
-// The mechanism for sending requests to the RoT from the host, and waiting for
-// replies.
+/// The mechanism for interacting with the RoT from the host.
 pub trait RotTransport {
-    type Error: std::error::Error;
-    fn send(&mut self, req: RotRequestV1) -> Result<(), Self::Error>;
-    fn recv(&mut self) -> Result<RotResponseV1, Self::Error>;
-    fn set_timeout(&mut self, timeout: Duration) -> Result<(), Self::Error>;
+    type Error: Error + Debug + PartialEq;
+
+    /// Send a request to the RoT, returning an error if the deadline is
+    /// exceeded in addition to any other possible errors from the transport.
+    fn send(
+        &mut self,
+        req: RotRequestV1,
+        deadline: Instant,
+    ) -> Result<(), Self::Error>;
+
+    /// Receive a message from an RoT, returning an error if the deadline is
+    // exceeded, in addition to any other possible errors from the transport.
+    fn recv(&mut self, deadline: Instant)
+        -> Result<RotResponseV1, Self::Error>;
+}
+
+// An error resulting from communcation with the RotManager
+#[derive(Error, Debug, PartialEq)]
+pub enum RotManagerError<T: Debug + PartialEq + Error> {
+    #[error("send to RotManager failed. Is the RotManager running?")]
+    SendFailed(RotOpV1),
+    #[error("recv from RotManager failed. Is the RotManager running?")]
+    RecvFailed,
+    #[error("shutdown failed. Is the RotManager running?")]
+    ShutdownFailed,
+    #[error("RoT transport error: {0}")]
+    TransportError(T),
+}
+
+/// An API wrapper to send messages to and receive replies from an RotManager
+/// running in a seperate thread.
+pub struct RotManagerHandle<T: RotTransport> {
+    tx: mpsc::Sender<RotManagerMsg<T>>,
+}
+
+impl<T: RotTransport> RotManagerHandle<T> {
+    pub async fn call(
+        &self,
+        op: RotOpV1,
+        deadline: Instant,
+    ) -> Result<RotResultV1, RotManagerError<T::Error>> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let msg = RotManagerMsg::RotRequest {
+            deadline,
+            op,
+            reply_tx,
+        };
+        self.tx.send(msg).await.map_err(|e| {
+            if let RotManagerMsg::RotRequest { op, .. } = e.0 {
+                RotManagerError::SendFailed(op)
+            } else {
+                unreachable!();
+            }
+        })?;
+        reply_rx.await.map_err(|_| RotManagerError::RecvFailed)?
+    }
+
+    async fn shutdown(&self) {
+        let msg = RotManagerMsg::Shutdown;
+        let _ = self.tx.send(msg).await;
+    }
 }
 
 /// A message handled by the RotManager
 #[derive(Debug)]
-pub enum RotManagerMsg {
+enum RotManagerMsg<T: RotTransport> {
     // A request to be transmitted to the RotSprocket
     RotRequest {
-        timeout: Duration,
+        deadline: Instant,
         op: RotOpV1,
-        reply_tx: oneshot::Sender<RotResultV1>,
+        reply_tx:
+            oneshot::Sender<Result<RotResultV1, RotManagerError<T::Error>>>,
     },
 
     // Shutdown the recv loop
@@ -44,7 +101,7 @@ pub struct RotManager<T: RotTransport> {
 
     // Receive a message from a tokio task with an RotRequestV1 and a tokio
     // oneshot sender for replying.
-    rx: mpsc::Receiver<RotManagerMsg>,
+    rx: mpsc::Receiver<RotManagerMsg<T>>,
 
     // The RotManager sends requests and receives responses over this transport
     // one at a time.
@@ -55,12 +112,18 @@ pub struct RotManager<T: RotTransport> {
 }
 
 impl<T: RotTransport> RotManager<T> {
+    /// Create a new RotTransport.
+    ///
+    /// `channel_capacity` should reflect the number of RoTs being communicated
+    ///  with simultaneously. For trust quorum purposes, this is the number of
+    // sleds in a rack.
     pub fn new(
+        channel_capacity: usize,
         rot_transport: T,
         logger: Logger,
-    ) -> (RotManager<T>, mpsc::Sender<RotManagerMsg>) {
+    ) -> (RotManager<T>, RotManagerHandle<T>) {
         let logger = logger.new(o!("component" => "RotManager"));
-        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(channel_capacity);
         (
             RotManager {
                 request_id: 0,
@@ -68,21 +131,21 @@ impl<T: RotTransport> RotManager<T> {
                 rot_transport,
                 logger,
             },
-            tx,
+            RotManagerHandle { tx },
         )
     }
 
     /// Loop receiving messages until all senders close or a Shutdown message is
     /// received.
-    pub fn run(&mut self) {
+    pub fn run(mut self) {
         while let Some(msg) = self.rx.blocking_recv() {
             match msg {
                 RotManagerMsg::RotRequest {
-                    timeout,
+                    deadline,
                     op,
                     reply_tx,
                 } => {
-                    let result = self.send_to_rot(op, timeout);
+                    let result = self.send_to_rot(op, deadline);
                     let _ = reply_tx.send(result);
                 }
                 RotManagerMsg::Shutdown => break,
@@ -90,8 +153,11 @@ impl<T: RotTransport> RotManager<T> {
         }
     }
 
-    fn send_to_rot(&mut self, op: RotOpV1, timeout: Duration) -> RotResultV1 {
-        let start = Instant::now();
+    fn send_to_rot(
+        &mut self,
+        op: RotOpV1,
+        deadline: Instant,
+    ) -> Result<RotResultV1, RotManagerError<T::Error>> {
         self.request_id += 1;
         let request = RotRequestV1 {
             version: 1,
@@ -99,66 +165,39 @@ impl<T: RotTransport> RotManager<T> {
             op,
         };
 
-        if let Err(e) = self.rot_transport.set_timeout(timeout) {
-            error!(
-                self.logger,
-                "Failed to set rot_transport timeout during send: {}", e
-            );
-            return RotResultV1::Err(RotError::TransportError);
-        }
-
-        if let Err(e) = self.rot_transport.send(request) {
-            error!(
-                self.logger,
-                "Failed to send message over rot_transport : {}", e
-            );
-            return RotResultV1::Err(RotError::SendError);
-        }
-
-        self.recv_from_rot(start, timeout)
+        self.rot_transport
+            .send(request, deadline)
+            .map_err(|e| RotManagerError::TransportError(e))?;
+        self.recv_from_rot(deadline)
     }
 
+    // Receive `RotResponseV1` messages from the RoT.
+    //
+    // If there is a prior transport timeout, the RoT may return a "stale"
+    // message with an old request id. In this case we need to call
+    // `self.rot_transport.recv()` again to try to recv the actual response we
+    // are waiting for.
     fn recv_from_rot(
         &mut self,
-        start: Instant,
-        timeout: Duration,
-    ) -> RotResultV1 {
+        deadline: Instant,
+    ) -> Result<RotResultV1, RotManagerError<T::Error>> {
         loop {
-            match self.rot_transport.recv() {
-                Ok(response) => {
-                    if response.id != self.request_id {
-                        warn!(
-                          self.logger,
-                          "Received stale response over rot_transport: ";
-                            "request_id" => self.request_id,
-                            "response_id" => response.id
-                        );
+            let response = self
+                .rot_transport
+                .recv(deadline)
+                .map_err(|e| RotManagerError::TransportError(e))?;
 
-                        // This is a stale id. Skip it, and wait some more.
-                        let remaining = timeout.saturating_sub(start.elapsed());
-                        if remaining == Duration::ZERO {
-                            return RotResultV1::Err(RotError::Timeout);
-                        }
-                        if let Err(e) =
-                            self.rot_transport.set_timeout(remaining)
-                        {
-                            error!(
-                                self.logger,
-                                "Failed to set rot_transport timeout during recv: {}", e
-                            );
-                            return RotResultV1::Err(RotError::TransportError);
-                        }
-                    }
-                    return response.result;
-                }
-                Err(e) => {
-                    error!(
-                        self.logger,
-                        "Failed to receive from rot_transport: {}", e
-                    );
-                    return RotResultV1::Err(RotError::RecvError);
-                }
+            if response.id == self.request_id {
+                return Ok(response.result);
             }
+
+            // This is a stale id. Skip it, and wait some more.
+            warn!(
+              self.logger,
+              "Received stale response over rot_transport: ";
+                "request_id" => self.request_id,
+                "response_id" => response.id
+            );
         }
     }
 }
@@ -168,10 +207,10 @@ mod tests {
     use super::*;
     use slog::Drain;
     use slog_term;
-    use sprockets_common::{random_buf, Ed25519PublicKey};
+    use sprockets_common::{random_buf, Sha3_256Digest};
     use sprockets_rot::{RotConfig, RotSprocket};
     use std::collections::VecDeque;
-    use thiserror::Error;
+    use std::time::Duration;
 
     fn test_logger() -> Logger {
         let decorator = slog_term::TermDecorator::new().build();
@@ -187,7 +226,7 @@ mod tests {
         ))
     }
 
-    #[derive(Error, Debug)]
+    #[derive(Error, Debug, PartialEq)]
     enum TestTransportError {
         #[error("Send")]
         Send,
@@ -201,6 +240,7 @@ mod tests {
         rot: RotSprocket,
         req: Option<RotRequestV1>,
         errors: VecDeque<TestTransportError>,
+        timed_out_responses: VecDeque<RotResponseV1>,
     }
 
     impl TestTransport {
@@ -209,6 +249,7 @@ mod tests {
                 rot: new_rot(),
                 req: None,
                 errors: VecDeque::new(),
+                timed_out_responses: VecDeque::new(),
             }
         }
 
@@ -226,7 +267,11 @@ mod tests {
     impl RotTransport for TestTransport {
         type Error = TestTransportError;
 
-        fn send(&mut self, req: RotRequestV1) -> Result<(), Self::Error> {
+        fn send(
+            &mut self,
+            req: RotRequestV1,
+            _: Instant,
+        ) -> Result<(), Self::Error> {
             if let Some(TestTransportError::Send) = self.errors.front() {
                 let _ = self.errors.pop_front();
                 return Err(TestTransportError::Send);
@@ -235,70 +280,58 @@ mod tests {
             Ok(())
         }
 
-        fn recv(&mut self) -> Result<RotResponseV1, Self::Error> {
+        fn recv(&mut self, _: Instant) -> Result<RotResponseV1, Self::Error> {
             match self.errors.pop_front() {
                 Some(TestTransportError::Recv) => {
                     return Err(TestTransportError::Recv)
                 }
                 Some(TestTransportError::Timeout) => {
-                    // Return a "stale" message with a bogus request id.
-                    // This emulates a prior transport timeout, followed by the
-                    // RoT finally returning the old result that is no longer
-                    // valid.
-                    let mut msg = self
+                    // Save this message to return later, emulating a slow RoT.
+                    let msg = self
                         .rot
                         .handle_deserialized(self.req.take().unwrap())
                         .unwrap();
-                    msg.id -= 1;
-                    return Ok(msg);
+                    self.timed_out_responses.push_back(msg);
+                    return Err(TestTransportError::Timeout);
                 }
                 Some(e) => self.errors.push_front(e),
                 None => (),
             }
-            Ok(self
-                .rot
-                .handle_deserialized(self.req.take().unwrap())
-                .unwrap())
-        }
-
-        // We arent' going to bother actually tracking time inside this fake
-        // transport. We can assume everything happens instantaneously, and
-        // force timeouts via error injection.
-        fn set_timeout(
-            &mut self,
-            _timeout: Duration,
-        ) -> Result<(), Self::Error> {
-            Ok(())
+            if let Some(old_msg) = self.timed_out_responses.pop_front() {
+                Ok(old_msg)
+            } else {
+                Ok(self
+                    .rot
+                    .handle_deserialized(self.req.take().unwrap())
+                    .unwrap())
+            }
         }
     }
 
     #[tokio::test]
     async fn successful_op() {
-        let (mut mgr, tx) =
-            RotManager::new(TestTransport::new(), test_logger());
+        let (mgr, handle) =
+            RotManager::new(32, TestTransport::new(), test_logger());
         let mgr_thread = std::thread::spawn(move || mgr.run());
 
-        let (reply_tx, reply_rx) = oneshot::channel();
-        let msg = RotManagerMsg::RotRequest {
-            timeout: Duration::from_millis(100),
-            op: RotOpV1::GetCertificates,
-            reply_tx,
-        };
+        let result = handle
+            .call(
+                RotOpV1::GetCertificates,
+                Instant::now() + Duration::from_millis(100),
+            )
+            .await
+            .unwrap();
 
-        tx.send(msg).await.unwrap();
-        let result = reply_rx.await.unwrap();
         assert!(matches!(result, RotResultV1::Certificates(..)));
 
-        tx.send(RotManagerMsg::Shutdown).await.unwrap();
+        handle.shutdown().await;
         mgr_thread.join().unwrap();
     }
 
-    // A timeout is returned as a result of a stale message taking a long time
+    // A timeout is returned as a result of a message taking a long time
     // to process.
     //
-    // We use a zero timeout for each message, and therefore when an old
-    // message is received, the timeout is noticed before the manager tries to
-    // receive from the transport again.
+    // On the next call the stale message gets skipped successfully.
     #[tokio::test]
     async fn injected_errors() {
         let mut transport = TestTransport::new();
@@ -308,27 +341,46 @@ mod tests {
             TestTransportError::Timeout,
         ]));
 
-        let (mut mgr, tx) = RotManager::new(transport, test_logger());
+        let (mgr, handle) = RotManager::new(32, transport, test_logger());
         let mgr_thread = std::thread::spawn(move || mgr.run());
 
         for i in 0..3 {
-            let (reply_tx, reply_rx) = oneshot::channel();
-            let msg = RotManagerMsg::RotRequest {
-                timeout: Duration::ZERO,
-                op: RotOpV1::GetCertificates,
-                reply_tx,
-            };
+            let err = handle
+                .call(RotOpV1::GetCertificates, Instant::now())
+                .await
+                .unwrap_err();
 
-            tx.send(msg).await.unwrap();
-            let result = reply_rx.await.unwrap();
             match i {
-                0 => assert_eq!(result, RotResultV1::Err(RotError::SendError)),
-                1 => assert_eq!(result, RotResultV1::Err(RotError::RecvError)),
-                2 => assert_eq!(result, RotResultV1::Err(RotError::Timeout)),
+                0 => assert_eq!(
+                    err,
+                    RotManagerError::TransportError(TestTransportError::Send)
+                ),
+                1 => assert_eq!(
+                    err,
+                    RotManagerError::TransportError(TestTransportError::Recv)
+                ),
+                2 => assert_eq!(
+                    err,
+                    RotManagerError::TransportError(
+                        TestTransportError::Timeout
+                    )
+                ),
                 _ => (),
             }
         }
-        tx.send(RotManagerMsg::Shutdown).await.unwrap();
+
+        // We can still succeed after a timeout
+        let result = handle
+            .call(
+                RotOpV1::SignTranscript(Sha3_256Digest([0; 32])),
+                Instant::now() + Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(result, RotResultV1::SignedTranscript(..)));
+
+        handle.shutdown().await;
         mgr_thread.join().unwrap();
     }
 }

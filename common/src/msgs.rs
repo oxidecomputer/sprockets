@@ -116,16 +116,6 @@ pub enum RotError {
     GetCertificates(GetCertificatesError),
     AddHostMeasurements(AddHostMeasurementsError),
     GetMeasurements(GetMeasurementsError),
-
-    // Failed to send over the transport
-    SendError,
-    // Failed to receive over the transport
-    RecvError,
-    // An RoT request timed out
-    Timeout,
-
-    // There was an error with the transport
-    TransportError,
 }
 
 #[derive(
