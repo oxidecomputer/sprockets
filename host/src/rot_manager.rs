@@ -207,6 +207,7 @@ mod tests {
     use super::*;
     use slog::Drain;
     use slog_term;
+    use sprockets_common::certificates::SerialNumber;
     use sprockets_common::{random_buf, Sha3_256Digest};
     use sprockets_rot::{RotConfig, RotSprocket};
     use std::collections::VecDeque;
@@ -223,6 +224,8 @@ mod tests {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
         RotSprocket::new(RotConfig::bootstrap_for_testing(
             &manufacturing_keypair,
+            salty::Keypair::from(&random_buf()),
+            SerialNumber(random_buf()),
         ))
     }
 
