@@ -116,7 +116,7 @@ impl<T: RotTransport> RotManager<T> {
     ///
     /// `channel_capacity` should reflect the number of RoTs being communicated
     ///  with simultaneously. For trust quorum purposes, this is the number of
-    // sleds in a rack.
+    /// sleds in a rack.
     pub fn new(
         channel_capacity: usize,
         rot_transport: T,
