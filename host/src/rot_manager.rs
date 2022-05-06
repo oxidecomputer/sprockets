@@ -33,7 +33,7 @@ pub trait RotTransport {
 
 // An error resulting from communcation with the RotManager
 #[derive(Error, Debug, PartialEq)]
-pub enum RotManagerError<T: Debug + PartialEq + Error> {
+pub enum RotManagerError<T: Error> {
     #[error("send to RotManager failed. Is the RotManager running?")]
     SendFailed(RotOpV1),
     #[error("recv from RotManager failed. Is the RotManager running?")]
@@ -72,7 +72,7 @@ impl<T: RotTransport> RotManagerHandle<T> {
         reply_rx.await.map_err(|_| RotManagerError::RecvFailed)?
     }
 
-    async fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         let msg = RotManagerMsg::Shutdown;
         let _ = self.tx.send(msg).await;
     }
@@ -203,7 +203,7 @@ impl<T: RotTransport> RotManager<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use slog::Drain;
     use slog_term;
@@ -213,15 +213,14 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::Duration;
 
-    fn test_logger() -> Logger {
+    pub(crate) fn test_logger() -> Logger {
         let decorator = slog_term::TermDecorator::new().build();
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
         slog::Logger::root(drain, o!("ctx" => "test"))
     }
 
-    fn new_rot() -> RotSprocket {
-        let manufacturing_keypair = salty::Keypair::from(&random_buf());
+    fn new_rot(manufacturing_keypair: &salty::Keypair) -> RotSprocket {
         RotSprocket::new(RotConfig::bootstrap_for_testing(
             &manufacturing_keypair,
             salty::Keypair::from(&random_buf()),
@@ -230,7 +229,7 @@ mod tests {
     }
 
     #[derive(Error, Debug, PartialEq)]
-    enum TestTransportError {
+    pub(crate) enum TestTransportError {
         #[error("Send")]
         Send,
         #[error("Recv")]
@@ -239,21 +238,28 @@ mod tests {
         Timeout,
     }
 
-    struct TestTransport {
-        rot: RotSprocket,
+    pub(crate) struct TestTransport {
+        pub(crate) rot: RotSprocket,
         req: Option<RotRequestV1>,
         errors: VecDeque<TestTransportError>,
         timed_out_responses: VecDeque<RotResponseV1>,
     }
 
     impl TestTransport {
-        fn new() -> TestTransport {
+        pub(crate) fn from_manufacturing_keypair(
+            manufacturing_keypair: &salty::Keypair,
+        ) -> Self {
             TestTransport {
-                rot: new_rot(),
+                rot: new_rot(manufacturing_keypair),
                 req: None,
                 errors: VecDeque::new(),
                 timed_out_responses: VecDeque::new(),
             }
+        }
+
+        fn new() -> TestTransport {
+            let manufacturing_keypair = salty::Keypair::from(&random_buf());
+            Self::from_manufacturing_keypair(&manufacturing_keypair)
         }
 
         // Force the transport to create an error scenario.
