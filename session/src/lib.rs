@@ -10,7 +10,6 @@ use derive_more::From;
 use ed25519;
 use ed25519_dalek;
 pub use hubpack::{deserialize, serialize, SerializedSize};
-use msgs::Identity;
 use sprockets_common::certificates::Ed25519Verifier;
 use sprockets_common::msgs::RotOpV1;
 use sprockets_common::{Ed25519PublicKey, Ed25519Signature};
@@ -22,8 +21,14 @@ mod msgs;
 mod server;
 mod session;
 
+pub use chacha20poly1305::aead::Buffer;
+pub use chacha20poly1305::Tag;
+pub use chacha20poly1305::ChaCha20Poly1305;
+pub use chacha20poly1305::aead::generic_array;
+pub use chacha20poly1305::aead::AeadCore;
 pub use client::ClientHandshake;
 pub use error::Error;
+pub use msgs::Identity;
 pub use server::ServerHandshake;
 pub use session::Session;
 
