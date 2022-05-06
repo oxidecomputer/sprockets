@@ -316,7 +316,7 @@ impl ServerHandshake {
             });
             Ok(SendToken::new().into())
         } else {
-            Err(Error::UnexpecteRotMsg)
+            Err(Error::UnexpectedRotMsg)
         }
     }
 
@@ -371,7 +371,7 @@ impl ServerHandshake {
             });
             Ok(SendToken::new().into())
         } else {
-            Err(Error::UnexpecteRotMsg)
+            Err(Error::UnexpectedRotMsg)
         }
     }
 
