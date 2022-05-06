@@ -21,11 +21,11 @@ mod msgs;
 mod server;
 mod session;
 
-pub use chacha20poly1305::aead::Buffer;
-pub use chacha20poly1305::Tag;
-pub use chacha20poly1305::ChaCha20Poly1305;
 pub use chacha20poly1305::aead::generic_array;
 pub use chacha20poly1305::aead::AeadCore;
+pub use chacha20poly1305::aead::Buffer;
+pub use chacha20poly1305::ChaCha20Poly1305;
+pub use chacha20poly1305::Tag;
 pub use client::ClientHandshake;
 pub use error::Error;
 pub use msgs::Identity;
