@@ -44,9 +44,9 @@ pub enum SessionError {
     Read(io::Error),
     #[error("sprockets error: {0:?}")]
     SprocketsError(sprockets_session::Error),
-    #[error("received message is too short (missing auth tag)")]
+    #[error("message too short (missing auth tag)")]
     TooShortForAuthTag,
-    #[error("received message is too long; max message size is {max})")]
+    #[error("message too long (max message size is {max})")]
     TooLong { max: usize },
 }
 
@@ -169,7 +169,7 @@ where
         let len = u32::try_from(message.len() + TAG_SIZE).unwrap();
 
         // Pack `[length_prefix || message]` into our buffer.
-        assert!(self.send_buf.is_empty());
+        self.send_buf.clear();
         self.send_buf.extend_from_slice(&len.to_be_bytes());
         self.send_buf.extend_from_slice(message);
 
@@ -186,11 +186,7 @@ where
         self.channel
             .write_all(&self.send_buf)
             .await
-            .map_err(SessionError::Write)?;
-
-        self.send_buf.clear();
-
-        Ok(())
+            .map_err(SessionError::Write)
     }
 
     /// Receive a message from the server through our encrypted session.
@@ -451,6 +447,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
     use std::thread;
 
     use super::*;
@@ -533,5 +530,73 @@ mod tests {
             server.send(msg.as_bytes()).await.unwrap();
             assert_eq!(client.recv().await.unwrap(), msg.as_bytes());
         }
+    }
+
+    #[tokio::test]
+    async fn reject_too_long_messages() {
+        let (mut client, mut server) = bootstrap(4).await;
+
+        // Sending a 4-byte message is fine
+        client.send(b"0123").await.unwrap();
+        assert_eq!(server.recv().await.unwrap(), b"0123");
+
+        // Trying to send a 5-byte message should fail
+        assert!(matches!(
+            client.send(b"01234").await.unwrap_err(),
+            SessionError::TooLong { max: 4 }
+        ));
+
+        // Recv should reject messages as soon as it reads a length prefix
+        // greater than 4 + TAG_SIZE bytes; confirm this by grabbing the raw
+        // channel from the client, sending an overlong length prefix, and
+        // confirming an error on the server recv.
+        let length_prefix = (4 + TAG_SIZE + 1) as u32;
+        client
+            .channel
+            .write_all(&length_prefix.to_be_bytes())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            server.recv().await.unwrap_err(),
+            SessionError::TooLong { max: 20 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn reject_too_short_messages() {
+        let (mut client, mut server) = bootstrap(4).await;
+
+        // Sending 0-length messages through the normal process is fine...
+        client.send(b"").await.unwrap();
+        assert_eq!(server.recv().await.unwrap(), b"");
+
+        // ... but sending a length prefix that's < TAG_SIZE should fail
+        let length_prefix = TAG_SIZE - 1;
+        client
+            .channel
+            .write_all(&length_prefix.to_be_bytes())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            server.recv().await.unwrap_err(),
+            SessionError::TooShortForAuthTag
+        ));
+    }
+
+    #[tokio::test]
+    async fn detect_remote_end_closing_connection() {
+        let (mut client, server) = bootstrap(4).await;
+        mem::drop(server);
+
+        assert!(matches!(
+            client.send(b"hi").await.unwrap_err(),
+            SessionError::Write { .. }
+        ));
+        assert!(matches!(
+            client.recv().await.unwrap_err(),
+            SessionError::Closed,
+        ));
     }
 }
