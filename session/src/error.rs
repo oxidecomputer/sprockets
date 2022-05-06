@@ -9,7 +9,7 @@ use sprockets_common::certificates::Ed25519CertificatesError;
 pub enum Error {
     BadVersion,
     UnexpectedMsg,
-    UnexpecteRotMsg,
+    UnexpectedRotMsg,
     Hubpack(hubpack::error::Error),
     DecryptError,
     EncryptError,
