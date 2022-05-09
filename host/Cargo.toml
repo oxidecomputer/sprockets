@@ -6,9 +6,11 @@ edition = "2021"
 [dependencies]
 sprockets-common = { path = "../common", features = ["rand"]}
 sprockets-session = { path = "../session" }
+futures = "0.3"
 ring = "0.16.20"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 derive_more = "0.99.17"
+pin-project = "1.0"
 serde = { version = "1.0.136", features = ["derive"]  }
 serde-big-array = { version = "0.3.2" }
 serialport = "4.0.1"

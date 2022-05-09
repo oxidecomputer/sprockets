@@ -5,6 +5,7 @@
 mod rot_manager;
 mod session;
 mod uart;
+mod length_prefixed;
 
 pub use sprockets_common::certificates::Ed25519Certificates;
 pub use sprockets_common::Ed25519PublicKey;
