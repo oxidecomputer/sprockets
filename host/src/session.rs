@@ -189,10 +189,8 @@ where
     }
 
     /// Receive a message from the server through our encrypted session.
-    //
-    // TODO document cancellation safety; I belive this method _is_ cancel safe,
-    // because we only await on `.read()` which is cancel safe, and we keep our
-    // own internal (resumable) state when it returns. Need to confirm.
+    ///
+    /// This method is cancel-safe.
     pub async fn recv(&mut self) -> Result<&[u8], SessionError> {
         let buf = self
             .recv_buf
@@ -641,5 +639,63 @@ mod tests {
             client.recv().await.unwrap_err(),
             SessionError::Closed,
         ));
+    }
+
+    #[tokio::test]
+    async fn recv_is_cancel_safe() {
+        let (mut client, mut server) = bootstrap(32).await;
+
+        // Exploit the fact that we're using an in-memory duplex:
+        //
+        // 1. Send a message.
+        // 2. Grab the underlying receive duplex and pull the message out.
+        // 3. Re-insert the first half of the message.
+        // 4. Try to recv() - wait for it to read the first half, then cancel
+        //    it.
+        // 5. Send the other half of the message.
+        // 6. Try to recv again; it should succeed.
+
+        // 1. Send a message
+        let msg = b"this will be cancelled";
+        client.send(msg).await.unwrap();
+
+        // 2. Grab the underlying receive duplex and pull the message out.
+        let mut buf = vec![0; msg.len() + 4 + TAG_SIZE];
+        server.channel.read_exact(&mut buf).await.unwrap();
+
+        // 3. Re-insert the first half of the message.
+        let (first_half, second_half) = buf.split_at(buf.len() / 2);
+        client.channel.write_all(first_half).await.unwrap();
+
+        // 4. Try to recv() - wait for it to read the first half, then cancel
+        //    it.
+        let start = Instant::now();
+        loop {
+            let check_first_half_read =
+                tokio::time::sleep(Duration::from_millis(50));
+            tokio::select! {
+                result = server.recv() => {
+                    panic!("unexpected recv() return: {:?}", result);
+                }
+                _ = check_first_half_read => {
+                    // see if our internal buffer has grabbed the first half of
+                    // the message; if so we're done (and we just cancelled a
+                    // recv!)
+                    if server.recv_buf.end == first_half.len() {
+                        break;
+                    }
+                    // eventually give up if this test is broken
+                    if start.elapsed() > Duration::from_secs(10) {
+                        panic!("test timeout (waited for 10 seconds)");
+                    }
+                }
+            }
+        }
+
+        // 5. Send the other half of the message.
+        client.channel.write_all(second_half).await.unwrap();
+
+        // 6. Try to recv again; it should succeed.
+        assert_eq!(server.recv().await.unwrap(), msg);
     }
 }
