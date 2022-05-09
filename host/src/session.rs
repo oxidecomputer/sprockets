@@ -21,6 +21,7 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
+use sprockets_session::MAX_HANDSHAKE_MSG_SIZE;
 use std::error::Error;
 use std::io;
 use std::time::Duration;
@@ -248,6 +249,10 @@ impl RecvBuf {
     where
         Chan: AsyncRead + AsyncWrite + Unpin,
     {
+        // Ensure we were allocated with enough space for `max_message_size` and
+        // its length prefix.
+        assert!(max_message_size <= self.buf.len() - 4);
+
         loop {
             // Do we have a 4-byte length prefix?
             if self.end - self.start >= 4 {
@@ -342,6 +347,7 @@ where
     let (mut handshake, token) =
         ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
     let mut send_buf = SendBuf::default();
+    let mut recv_buf = RecvBuf::with_capacity(MAX_HANDSHAKE_MSG_SIZE + 4);
 
     // Send the ClientHello
     send_buf.append_message(&buf);
@@ -351,7 +357,11 @@ where
         .map_err(SessionError::Write)?;
 
     // Receive the ServerHello
-    read_length_prefixed(channel, &mut buf).await?;
+    let msg = recv_buf
+        .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
+        .await?;
+    buf.clear();
+    buf.extend_from_slice(msg).unwrap();
 
     // Handle the ServerHello and retrieve the next action to take
     let mut action = handshake
@@ -369,7 +379,11 @@ where
                         .await
                         .map_err(SessionError::Write)?;
                 }
-                read_length_prefixed(channel, &mut buf).await?;
+                let msg = recv_buf
+                    .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
+                    .await?;
+                buf.clear();
+                buf.extend_from_slice(msg).unwrap();
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -418,7 +432,11 @@ where
 
     // Receive the ClientHello
     let mut buf = HandshakeMsgVec::new();
-    read_length_prefixed(channel, &mut buf).await?;
+    let mut recv_buf = RecvBuf::with_capacity(MAX_HANDSHAKE_MSG_SIZE + 4);
+    let msg = recv_buf
+        .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
+        .await?;
+    buf.extend_from_slice(msg).unwrap();
 
     // Handle the ClientHello and retrieve the next action to take
     let mut action = handshake
@@ -436,7 +454,11 @@ where
                         .await
                         .map_err(SessionError::Write)?;
                 }
-                read_length_prefixed(channel, &mut buf).await?;
+                let msg = recv_buf
+                    .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
+                    .await?;
+                buf.clear();
+                buf.extend_from_slice(msg).unwrap();
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -466,29 +488,6 @@ where
             }
         }
     }
-}
-
-async fn read_length_prefixed<Chan, E>(
-    channel: &mut Chan,
-    buf: &mut HandshakeMsgVec,
-) -> Result<(), SessionHandshakeError<E>>
-where
-    Chan: AsyncRead + AsyncWrite + Unpin,
-    E: Error,
-{
-    let mut len = [0; 4];
-    channel
-        .read_exact(&mut len)
-        .await
-        .map_err(SessionError::Read)?;
-    let len = u32::from_be_bytes(len) as usize;
-
-    buf.resize_default(len)
-        .map_err(|()| SessionHandshakeError::OverlargeLengthPrefix(len))?;
-
-    channel.read_exact(buf).await.map_err(SessionError::Read)?;
-
-    Ok(())
 }
 
 #[cfg(test)]
