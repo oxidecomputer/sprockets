@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 sprockets-common = { path = "../common", features = ["rand"]}
+sprockets-session = { path = "../session" }
 ring = "0.16.20"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 derive_more = "0.99.17"
@@ -15,10 +16,8 @@ clap = { version = "3.1", features = ["derive"] }
 corncobs = { version = "0.1.1", features = ["std"] }
 thiserror = "1.0.30"
 anyhow = "1.0.56"
-tokio = { version = "1.18.1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1.18.1", features = ["io-util", "sync", "rt", "macros"] }
 slog = "2.7.0"
-
-
 
 [dev-dependencies]
 # Salty is used by the RoT for Ed25519 signatures
@@ -26,6 +25,7 @@ salty = { version = "0.2.0" }
 sprockets-rot = { path = "../rot" }
 slog-term = "2.9.0"
 slog-async = "2.7.0"
+tokio = { version = "1.18.1", features = ["io-util", "sync", "rt", "macros", "time"] }
 
 [[bin]]
 name = "sprockets-cli"

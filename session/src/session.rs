@@ -5,7 +5,7 @@
 //! Secure Session type
 
 use chacha20poly1305::aead::{AeadInPlace, Buffer, NewAead};
-use chacha20poly1305::{self, ChaCha20Poly1305, Key};
+use chacha20poly1305::{self, ChaCha20Poly1305, Key, Tag};
 use hkdf::Hkdf;
 use sha3::Sha3_256;
 use zeroize::Zeroizing;
@@ -123,6 +123,21 @@ impl Session {
             .map_err(|_| Error::EncryptError)
     }
 
+    /// Encrypt an application level plaintext message in place, returning the
+    /// 16-byte authentication tag.
+    pub fn encrypt_in_place_detached(
+        &mut self,
+        buf: &mut [u8],
+    ) -> Result<Tag, Error> {
+        let nonce = self.chacha20poly1305nonce(self.role);
+        let aead = match self.role {
+            Role::Client => &mut self.client_aead,
+            Role::Server => &mut self.server_aead,
+        };
+        aead.encrypt_in_place_detached(&nonce, b"", buf)
+            .map_err(|_| Error::EncryptError)
+    }
+
     /// Decrypt buf in place, returning the plaintext in buf
     pub fn decrypt(&mut self, buf: &mut dyn Buffer) -> Result<(), Error> {
         let nonce = self.chacha20poly1305nonce(self.role.peer());
@@ -131,6 +146,22 @@ impl Session {
             Role::Server => &mut self.server_aead,
         };
         aead.decrypt_in_place(&nonce, b"", buf)
+            .map_err(|_| Error::DecryptError)
+    }
+
+    /// Decrypt buf in place, returning an error if the provided authentication
+    /// tag does not match the ciphertext.
+    pub fn decrypt_in_place_detached(
+        &mut self,
+        buf: &mut [u8],
+        tag: &Tag,
+    ) -> Result<(), Error> {
+        let nonce = self.chacha20poly1305nonce(self.role.peer());
+        let aead = match self.role.peer() {
+            Role::Client => &mut self.client_aead,
+            Role::Server => &mut self.server_aead,
+        };
+        aead.decrypt_in_place_detached(&nonce, b"", buf, tag)
             .map_err(|_| Error::DecryptError)
     }
 
