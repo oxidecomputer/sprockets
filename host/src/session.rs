@@ -297,6 +297,36 @@ impl RecvBuf {
     }
 }
 
+#[derive(Debug, Default)]
+struct SendBuf {
+    buf: Vec<u8>,
+}
+
+impl SendBuf {
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    // Append `msg` to our buffer, prepended by a length prefix.
+    fn append_message(&mut self, msg: &[u8]) {
+        let prefix =
+            u32::try_from(msg.len()).expect("message length overflows u32");
+        self.buf.extend_from_slice(&prefix.to_be_bytes());
+        self.buf.extend_from_slice(msg);
+    }
+
+    // Write all the buffered data we contain to `channel`, then clear our
+    // buffer.
+    async fn write_all<Chan>(&mut self, channel: &mut Chan) -> io::Result<()>
+    where
+        Chan: AsyncWrite + Unpin,
+    {
+        channel.write_all(&self.buf).await?;
+        self.buf.clear();
+        Ok(())
+    }
+}
+
 async fn client_handshake<Chan, T>(
     channel: &mut Chan,
     manufacturing_public_key: Ed25519PublicKey,
@@ -311,9 +341,14 @@ where
     let mut buf = HandshakeMsgVec::new();
     let (mut handshake, token) =
         ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
+    let mut send_buf = SendBuf::default();
 
     // Send the ClientHello
-    write_length_prefixed(channel, &buf).await?;
+    send_buf.append_message(&buf);
+    send_buf
+        .write_all(channel)
+        .await
+        .map_err(SessionError::Write)?;
 
     // Receive the ServerHello
     read_length_prefixed(channel, &mut buf).await?;
@@ -327,6 +362,13 @@ where
     loop {
         action = match action {
             UserAction::Recv(token) => {
+                // If we have buffered data to send, send it before receiving.
+                if !send_buf.is_empty() {
+                    send_buf
+                        .write_all(channel)
+                        .await
+                        .map_err(SessionError::Write)?;
+                }
                 read_length_prefixed(channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
@@ -336,7 +378,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                write_length_prefixed(channel, &buf).await?;
+                send_buf.append_message(&buf);
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -346,6 +388,13 @@ where
                     .map_err(SessionError::SprocketsError)?
             }
             UserAction::Complete(token) => {
+                // If we have buffered data to send, send it before completing.
+                if !send_buf.is_empty() {
+                    send_buf
+                        .write_all(channel)
+                        .await
+                        .map_err(SessionError::Write)?;
+                }
                 return Ok((handshake, token));
             }
         }
@@ -365,6 +414,7 @@ where
 {
     let (mut handshake, token) =
         ServerHandshake::init(manufacturing_public_key, rot_certs);
+    let mut send_buf = SendBuf::default();
 
     // Receive the ClientHello
     let mut buf = HandshakeMsgVec::new();
@@ -379,6 +429,13 @@ where
     loop {
         action = match action {
             UserAction::Recv(token) => {
+                // If we have buffered data to send, send it before receiving.
+                if !send_buf.is_empty() {
+                    send_buf
+                        .write_all(channel)
+                        .await
+                        .map_err(SessionError::Write)?;
+                }
                 read_length_prefixed(channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
@@ -388,7 +445,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                write_length_prefixed(channel, &buf).await?;
+                send_buf.append_message(&buf);
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -398,28 +455,17 @@ where
                     .map_err(SessionError::SprocketsError)?
             }
             UserAction::Complete(token) => {
+                // If we have buffered data to send, send it before completing.
+                if !send_buf.is_empty() {
+                    send_buf
+                        .write_all(channel)
+                        .await
+                        .map_err(SessionError::Write)?;
+                }
                 return Ok((handshake, token));
             }
         }
     }
-}
-
-// TODO? `write_length_prefixed` and `read_length_prefixed` don't have any
-// buffering around `channel`, so they both issue two write/read calls to
-// `channel` (which probably results in two syscalls per message). Is that okay
-// for the handshake?
-async fn write_length_prefixed<Chan>(
-    channel: &mut Chan,
-    msg: &[u8],
-) -> Result<(), SessionError>
-where
-    Chan: AsyncRead + AsyncWrite + Unpin,
-{
-    let len = u32::try_from(msg.len()).expect("message length overflows u32");
-    let len = len.to_be_bytes();
-    channel.write_all(&len).await.map_err(SessionError::Write)?;
-    channel.write_all(msg).await.map_err(SessionError::Write)?;
-    channel.flush().await.map_err(SessionError::Write)
 }
 
 async fn read_length_prefixed<Chan, E>(
