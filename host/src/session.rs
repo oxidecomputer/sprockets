@@ -59,8 +59,6 @@ pub enum SessionHandshakeError<E: Error> {
     RotError(RotError),
     #[error("communication with RoT failed: {0:?}")]
     RotCommunicationError(#[from] RotManagerError<E>),
-    #[error("handshake error: received overlarge length prefix {0}")]
-    OverlargeLengthPrefix(usize),
 }
 
 pub struct Session<Chan> {
