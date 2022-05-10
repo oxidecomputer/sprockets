@@ -8,7 +8,6 @@
 use futures::ready;
 use pin_project::pin_project;
 use std::io;
-use std::mem;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -20,9 +19,21 @@ use tokio::io::ReadBuf;
 pub(crate) struct LengthPrefixed<T> {
     #[pin]
     inner: T,
-    write_current: Vec<u8>,
-    write_current_pos: usize,
-    write_next: Vec<u8>,
+
+    // Incoming data to write is buffered into `write_buf` (starting at position
+    // 4 to leave space for a length prefix) until it either fills or we're
+    // explicitly told to flush, at which point `write_flushing` is set to true,
+    // and we no longer buffer data until we've flushed everything (i.e.,
+    // `write_pos` advances to `write_buf.len()`), at which point we reset.
+    write_buf: Vec<u8>,
+    write_pos: usize,
+    write_flushing: bool,
+
+    // Reads are single-buffered; incoming data is appended starting at
+    // `read_buf[read_end..]`, and when we're polled for reading we read data
+    // from `read_buf[read_pos..read_pos+read_remaining_this_msg]`, where
+    // `read_remaining_this_msg` was initialized with the length prefix we
+    // received when reading from `inner`.
     read_buf: Box<[u8]>,
     read_remaining_this_msg: usize,
     read_pos: usize,
@@ -37,9 +48,9 @@ impl<T> LengthPrefixed<T> {
         let read_buf = vec![0; cap];
         Self {
             inner,
-            write_current: Vec::with_capacity(cap),
-            write_current_pos: 0,
-            write_next: Vec::with_capacity(cap),
+            write_buf: Vec::with_capacity(cap),
+            write_pos: 0,
+            write_flushing: false,
             read_buf: read_buf.into_boxed_slice(),
             read_remaining_this_msg: 0,
             read_pos: 0,
@@ -62,9 +73,9 @@ impl<T> LengthPrefixed<T> {
         let me = self.project();
         ProjectedWrite {
             inner: me.inner,
-            current: me.write_current,
-            current_pos: me.write_current_pos,
-            next: me.write_next,
+            buf: me.write_buf,
+            pos: me.write_pos,
+            flushing: me.write_flushing,
         }
     }
 }
@@ -179,57 +190,32 @@ impl<T: AsyncRead> AsyncRead for LengthPrefixed<T> {
 
 struct ProjectedWrite<'a, T> {
     inner: Pin<&'a mut T>,
-    current: &'a mut Vec<u8>,
-    current_pos: &'a mut usize,
-    next: &'a mut Vec<u8>,
+    buf: &'a mut Vec<u8>,
+    pos: &'a mut usize,
+    flushing: &'a mut bool,
 }
 
 impl<T: AsyncWrite> ProjectedWrite<'_, T> {
-    fn set_current_from_next(&mut self) {
-        // `next` should have at least four bytes (space for the length prefix).
-        assert!(self.next.len() >= 4);
+    fn start_flushing(&mut self) {
+        // `buf` should have at least four bytes (space for the length prefix).
+        assert!(self.buf.len() >= 4);
 
         // Assign the length prefix.
-        let len = self.next.len();
+        let len = self.buf.len();
         let len =
             u32::try_from(len - 4).expect("buffer capacity overflows u32");
-        self.next[..4].copy_from_slice(&len.to_be_bytes());
+        self.buf[..4].copy_from_slice(&len.to_be_bytes());
 
-        // Do the swap, and clear the new `next`.
-        mem::swap(self.next, self.current);
-        self.next.clear();
+        *self.flushing = true;
     }
 
-    fn buffer_into_next(&mut self, data: &[u8]) -> usize {
-        // Do nothing if we have no data to buffer.
-        if data.is_empty() {
-            return 0;
-        }
-
-        // If we haven't yet started buffering the next message, do so now: skip
-        // ahead 4 bytes to leave room for the length prefix.
-        if self.next.is_empty() {
-            self.next.resize(4, 0);
-        }
-
-        // Buffer as much of `data` as we can.
-        let n = usize::min(data.len(), self.next.capacity() - self.next.len());
-        self.next.extend_from_slice(&data[..n]);
-
-        n
-    }
-
-    fn next_is_full(&self) -> bool {
-        self.next.capacity() == self.next.len()
-    }
-
-    fn flush_current(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let mut ret = Ok(());
-        while *self.current_pos < self.current.len() {
+        while *self.pos < self.buf.len() {
             match ready!(self
                 .inner
                 .as_mut()
-                .poll_write(cx, &self.current[*self.current_pos..]))
+                .poll_write(cx, &self.buf[*self.pos..]))
             {
                 Ok(0) => {
                     ret = Err(io::Error::new(
@@ -238,16 +224,17 @@ impl<T: AsyncWrite> ProjectedWrite<'_, T> {
                     ));
                     break;
                 }
-                Ok(n) => *self.current_pos += n,
+                Ok(n) => *self.pos += n,
                 Err(e) => {
                     ret = Err(e);
                     break;
                 }
             }
         }
-        if *self.current_pos == self.current.len() {
-            *self.current_pos = 0;
-            self.current.clear();
+        if *self.pos == self.buf.len() {
+            *self.pos = 0;
+            *self.flushing = false;
+            self.buf.clear();
         }
         Poll::Ready(ret)
     }
@@ -264,28 +251,22 @@ impl<T: AsyncWrite> AsyncWrite for LengthPrefixed<T> {
         // If we still have buffered data from the message we're currently
         // sending, try to flush it to our underlying writer (and return if we
         // can't).
-        if !me.current.is_empty() {
-            ready!(me.flush_current(cx))?;
+        if *me.flushing {
+            ready!(me.flush(cx))?;
         }
 
-        // `flush_current` should only return successfully if all data has been
-        // flushed; sanity check.
-        debug_assert!(me.current.is_empty());
+        // Leave space for the length prefix, if we haven't already.
+        if me.buf.is_empty() {
+            me.buf.resize(4, 0);
+        }
 
         // Buffer as much of `buf` as we can.
-        let mut n = me.buffer_into_next(buf);
+        let n = usize::min(buf.len(), me.buf.capacity() - me.buf.len());
+        me.buf.extend_from_slice(&buf[..n]);
 
-        // If we've filled the next buffer, swap it with `current` and continue
-        // buffering.
-        if me.next_is_full() {
-            me.set_current_from_next();
-
-            // Do we have leftover data from the caller we could continue to
-            // buffer?
-            if n < buf.len() {
-                let m = me.buffer_into_next(&buf[n..]);
-                n += m;
-            }
+        // If we're full, set `flushing` for next time we're polled.
+        if me.buf.capacity() == me.buf.len() {
+            me.start_flushing();
         }
 
         Poll::Ready(Ok(n))
@@ -296,11 +277,10 @@ impl<T: AsyncWrite> AsyncWrite for LengthPrefixed<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
         let mut me = self.project_write();
-        ready!(me.flush_current(cx))?;
-        if !me.next.is_empty() {
-            me.set_current_from_next();
-            ready!(me.flush_current(cx))?;
+        if !*me.flushing && !me.buf.is_empty() {
+            me.start_flushing();
         }
+        ready!(me.flush(cx))?;
         me.inner.poll_flush(cx)
     }
 
@@ -309,11 +289,10 @@ impl<T: AsyncWrite> AsyncWrite for LengthPrefixed<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
         let mut me = self.project_write();
-        ready!(me.flush_current(cx))?;
-        if !me.next.is_empty() {
-            me.set_current_from_next();
-            ready!(me.flush_current(cx))?;
+        if !*me.flushing && !me.buf.is_empty() {
+            me.start_flushing();
         }
+        ready!(me.flush(cx))?;
         me.inner.poll_shutdown(cx)
     }
 }
@@ -321,6 +300,7 @@ impl<T: AsyncWrite> AsyncWrite for LengthPrefixed<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
 
@@ -498,8 +478,7 @@ mod tests {
 
         // Sanity check that the write buffer capacity is exactly 8, as our test
         // logic below assumes it.
-        assert_eq!(tx.write_current.capacity(), 8);
-        assert_eq!(tx.write_next.capacity(), 8);
+        assert_eq!(tx.write_buf.capacity(), 8);
 
         // Buffer capacity is 8; with a length prefix of 4, we should be able to
         // write individual bytes but only see writes to the underlying duplex
@@ -534,33 +513,25 @@ mod tests {
 
         // Sanity check that the write buffer capacity is exactly 8, as our test
         // logic below assumes it.
-        assert_eq!(tx.write_current.capacity(), 8);
-        assert_eq!(tx.write_next.capacity(), 8);
+        assert_eq!(tx.write_buf.capacity(), 8);
 
         // Write 3 bytes; this should insert space for a 4-byte prefix and leave
         // room for 1 more byte (without writing anything to the underlying
         // duplex stream).
         tx.write_all(b"012").await.unwrap();
         assert_eq!(tx.inner.write_count, 0);
-        assert_eq!(tx.write_next.len(), 7);
-        assert_eq!(&tx.write_next[4..], b"012");
+        assert_eq!(tx.write_buf.len(), 7);
+        assert_eq!(&tx.write_buf[4..], b"012");
 
         // Try to write 3 more bytes; the first of these bytes should be
-        // included in the write that goes to the underlying stream, and the
-        // remaining 2 bytes should end up in the new `write_next` buffer.
-        //
-        // This _still_ doesn't trigger any writes to the underlying stream;
-        // it only forces a buffer swap (writes will happen the next time a
-        // write is called).
+        // included in a write that goes to the underlying stream, and the
+        // remaining 2 bytes should end up in the buffer after that write.
         tx.write_all(b"345").await.unwrap();
-        assert_eq!(tx.inner.write_count, 0);
-        assert_eq!(&tx.write_current[..4], 4_u32.to_be_bytes());
-        assert_eq!(&tx.write_current[4..], b"0123");
-        assert_eq!(tx.write_next.len(), 6);
-        assert_eq!(&tx.write_next[4..], b"45");
+        assert_eq!(tx.inner.write_count, 1);
+        assert_eq!(tx.write_buf.len(), 6);
+        assert_eq!(&tx.write_buf[4..], b"45");
 
-        // Shut down the stream (which should also flush both buffers), then
-        // drop it.
+        // Shut down the stream (which also flushes the buffer), then drop it.
         tx.shutdown().await.unwrap();
         assert_eq!(tx.inner.write_count, 2);
         mem::drop(tx);

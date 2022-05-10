@@ -165,7 +165,6 @@ where
         // Copy message into our buffer.
         self.encrypt_buf.clear();
         self.encrypt_buf.extend_from_slice(message);
-
         self.send_plaintext(None).await
     }
 
