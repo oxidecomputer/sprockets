@@ -4,6 +4,7 @@
 
 //! High-level Sprockets session API, akin to a TLS session.
 
+use crate::length_prefixed::LengthPrefixed;
 use crate::rot_manager::RotManagerError;
 use crate::rot_manager::RotManagerHandle;
 use crate::rot_manager::RotTransport;
@@ -21,7 +22,6 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
-use sprockets_session::MAX_HANDSHAKE_MSG_SIZE;
 use std::error::Error;
 use std::io;
 use std::time::Duration;
@@ -37,8 +37,6 @@ const TAG_SIZE: usize =
 
 #[derive(Debug, Error)]
 pub enum SessionError {
-    #[error("connection closed")]
-    Closed,
     #[error("I/O error writing to underlying channel: {0}")]
     Write(io::Error),
     #[error("I/O error reading from underlying channel: {0}")]
@@ -62,26 +60,51 @@ pub enum SessionHandshakeError<E: Error> {
 }
 
 pub struct Session<Chan> {
-    channel: Chan,
+    // We wrap the `Chan` (typically a `TcpStream`, but can be any
+    // `AsyncRead+AsyncWrite`, such as an in-memory duplex in tests) in a
+    // `LengthPrefixed`, which acts as both a `BufRead`/`BufWrite` around the
+    // inner channel and deals with 4-byte length prefixes prepended to any
+    // chunks read or written.
+    //
+    // This file _also_ adds length prefixes, which means we can end up with
+    // nested length prefixes; for example, during the handshake process where
+    // one side will send multiple messages in a row without waiting for
+    // responses, the underlying bytes sent on the wire will include multiple
+    // coalesced messages:
+    //
+    // ```
+    // [overall_length | length_0 | message_0 | length_1 | message_1 | .. ]
+    // ```
+    //
+    // The primary value of `LengthPrefixed` is currently the buffering it
+    // provides; we could consider using tokio's built-in buffering types
+    // instead. But this provides a path to allowing `Session` itself to
+    // implement `AsyncRead`/`AsyncWrite` with transparent-to-the-caller
+    // encryption (in which case we would need to push the `RawSession` down
+    // into `LengthPrefixed` so that it could encrypt/decrypt each chunk).
+    channel: LengthPrefixed<Chan>,
     remote_identity: Identity,
     session: RawSession,
-    recv_buf: RecvBuf,
-    send_buf: Vec<u8>,
-    max_message_size: usize,
+    encrypt_buf: Vec<u8>,
 }
+
+// Size for in-memory buffers; messages larger than this will be chunked, and
+// messages smaller than this can potentially be coalesced.
+const BUFFER_CAPACITY: usize = 8192;
 
 impl<Chan> Session<Chan>
 where
     Chan: AsyncRead + AsyncWrite + Unpin,
 {
     pub async fn new_client<T: RotTransport>(
-        mut channel: Chan,
+        channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
         rot: &RotManagerHandle<T>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
-        max_message_size: usize,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
+        let mut channel =
+            LengthPrefixed::with_capacity(channel, BUFFER_CAPACITY);
         let (handshake, completion_token) = client_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -94,22 +117,23 @@ where
         let remote_identity = completion_token.remote_identity().clone();
         let session = handshake.new_session(completion_token);
 
-        Ok(Self::new_common(
+        Ok(Self {
             channel,
             remote_identity,
             session,
-            max_message_size,
-        ))
+            encrypt_buf: Vec::new(),
+        })
     }
 
     pub async fn new_server<T: RotTransport>(
-        mut channel: Chan,
+        channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
         rot: &RotManagerHandle<T>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
-        max_message_size: usize,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
+        let mut channel =
+            LengthPrefixed::with_capacity(channel, BUFFER_CAPACITY);
         let (handshake, completion_token) = server_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -122,95 +146,121 @@ where
         let remote_identity = completion_token.remote_identity().clone();
         let session = handshake.new_session(completion_token);
 
-        Ok(Self::new_common(
+        Ok(Self {
             channel,
             remote_identity,
             session,
-            max_message_size,
-        ))
+            encrypt_buf: Vec::new(),
+        })
     }
 
-    fn new_common(
-        channel: Chan,
-        remote_identity: Identity,
-        session: RawSession,
-        max_message_size: usize,
-    ) -> Self {
-        // Allocate space in our send/recv buffers for the max message plus our
-        // overhead (4-byte length prefix and auth tag).
-        let max_msg_with_tag = max_message_size + TAG_SIZE;
-        assert!(max_msg_with_tag < u32::MAX as usize);
-        let buf_size = max_msg_with_tag + 4;
-
-        Self {
-            channel,
-            remote_identity,
-            session,
-            recv_buf: RecvBuf::with_capacity(buf_size),
-            send_buf: Vec::with_capacity(buf_size),
-            max_message_size,
-        }
-    }
-
-    /// Send a message to the server through our encrypted session.
+    /// Send a message to the remote side through our encrypted session.
+    ///
+    /// `message` will first be copied into an internal buffer for encryption.
+    /// To avoid this copy, use [`send_in_place()`](Self::send_in_place)
+    /// instead.
     ///
     /// This method is NOT cancel-safe.
     pub async fn send(&mut self, message: &[u8]) -> Result<(), SessionError> {
-        if message.len() > self.max_message_size {
-            return Err(SessionError::TooLong {
-                max: self.max_message_size,
-            });
-        }
+        // Copy message into our buffer.
+        self.encrypt_buf.clear();
+        self.encrypt_buf.extend_from_slice(message);
 
-        // Compute total message length. We know this fits in a u32 because of
-        // the check against `max_message_size` and our assertion in
-        // `new_common` that the max message size (plus overhead) fits in a u32.
-        let len = u32::try_from(message.len() + TAG_SIZE).unwrap();
+        self.send_plaintext(None).await
+    }
 
-        // Pack `[length_prefix || message]` into our buffer.
-        self.send_buf.clear();
-        self.send_buf.extend_from_slice(&len.to_be_bytes());
-        self.send_buf.extend_from_slice(message);
+    /// Encrypt `message` in place and then send it to the remote side.
+    ///
+    /// This method is NOT cancel-safe.
+    pub async fn send_in_place(
+        &mut self,
+        message: &mut [u8],
+    ) -> Result<(), SessionError> {
+        self.send_plaintext(Some(message)).await
+    }
 
-        // Encrypt message in place.
+    // Private helper function to appease the borrow checker: if it's `Some(_)`,
+    // it contains the plaintext in a caller-provided buffer; if it's `None`,
+    // the plaintext is taken from `self.encrypt_buf`.
+    async fn send_plaintext(
+        &mut self,
+        plaintext: Option<&mut [u8]>,
+    ) -> Result<(), SessionError> {
+        // Encrypt plaintext.
+        let message = plaintext.unwrap_or(&mut self.encrypt_buf);
         let tag = self
             .session
-            .encrypt_in_place_detached(&mut self.send_buf[4..])
+            .encrypt_in_place_detached(message)
             .map_err(SessionError::SprocketsError)?;
 
-        // Append tag to our buffer.
+        // Compute total message length.
         assert_eq!(tag.len(), TAG_SIZE);
-        self.send_buf.extend_from_slice(&tag);
+        let len = u32::try_from(message.len() + TAG_SIZE).map_err(|_| {
+            SessionError::TooLong {
+                max: u32::MAX as usize - TAG_SIZE,
+            }
+        })?;
 
+        // Write [length | ciphertext | tag] to the underlying channel (which
+        // buffers all of these messages).
         self.channel
-            .write_all(&self.send_buf)
+            .write_all(&len.to_be_bytes())
             .await
-            .map_err(SessionError::Write)
+            .map_err(SessionError::Write)?;
+        self.channel
+            .write_all(message)
+            .await
+            .map_err(SessionError::Write)?;
+        self.channel
+            .write_all(&tag)
+            .await
+            .map_err(SessionError::Write)?;
+
+        // Flush the channel, forcing writes to the underlying stream.
+        // TODO Should we expose the option to flush or not to the user?
+        self.channel.flush().await.map_err(SessionError::Write)?;
+
+        Ok(())
     }
 
     /// Receive a message from the server through our encrypted session.
     ///
-    /// This method is cancel-safe.
-    pub async fn recv(&mut self) -> Result<&[u8], SessionError> {
-        let buf = self
-            .recv_buf
-            .recv_length_prefixed(
-                &mut self.channel,
-                self.max_message_size + TAG_SIZE,
-            )
-            .await?;
-
-        // Reject too-short messages.
-        if buf.len() < TAG_SIZE {
-            return Err(SessionError::TooShortForAuthTag);
+    /// This method is NOT cancel-safe.
+    pub async fn recv<'a>(
+        &mut self,
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], SessionError> {
+        // Read length prefix.
+        let mut prefix = [0; 4];
+        self.channel
+            .read_exact(&mut prefix)
+            .await
+            .map_err(SessionError::Read)?;
+        let len = u32::from_be_bytes(prefix) as usize;
+        let len = len
+            .checked_sub(TAG_SIZE)
+            .ok_or(SessionError::TooShortForAuthTag)?;
+        if len > buf.len() {
+            return Err(SessionError::TooLong { max: buf.len() });
         }
+        let buf = &mut buf[..len];
 
-        // Split into encrypted message and auth tag.
-        let (buf, tag) = buf.split_at_mut(buf.len() - TAG_SIZE);
-        let tag = Tag::from_slice(tag);
+        // Read encrypted data.
+        self.channel
+            .read_exact(buf)
+            .await
+            .map_err(SessionError::Read)?;
 
+        // Read tag.
+        let mut tag = Tag::default();
+        self.channel
+            .read_exact(&mut tag)
+            .await
+            .map_err(SessionError::Read)?;
+
+        // Perform decryption.
         self.session
-            .decrypt_in_place_detached(buf, tag)
+            .decrypt_in_place_detached(buf, &tag)
             .map_err(SessionError::SprocketsError)?;
 
         Ok(buf)
@@ -222,114 +272,49 @@ where
     }
 }
 
-struct RecvBuf {
-    buf: Vec<u8>,
-    start: usize,
-    end: usize,
+// Helper functions to send/receive length-prefixes messages without an auth tag
+// (used during handshake).
+async fn send_length_prefixed<Chan>(
+    channel: &mut LengthPrefixed<Chan>,
+    msg: &[u8],
+) -> Result<(), SessionError>
+where
+    Chan: AsyncWrite + Unpin,
+{
+    let len = u32::try_from(msg.len()).expect("message overflows u32");
+    channel.write_all(&len.to_be_bytes()).await.map_err(SessionError::Write)?;
+    channel.write_all(msg).await.map_err(SessionError::Write)?;
+    Ok(())
 }
 
-impl RecvBuf {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buf: vec![0; capacity],
-            start: 0,
-            end: 0,
-        }
+async fn recv_length_prefixed<Chan>(
+    channel: &mut LengthPrefixed<Chan>,
+    buf: &mut HandshakeMsgVec,
+) -> Result<(), SessionError>
+where
+    Chan: AsyncRead + Unpin,
+{
+    let mut prefix = [0; 4];
+    channel
+        .read_exact(&mut prefix)
+        .await
+        .map_err(SessionError::Read)?;
+    let len = u32::from_be_bytes(prefix) as usize;
+    if len > buf.capacity() {
+        return Err(SessionError::TooLong { max: buf.capacity() });
     }
 
-    async fn recv_length_prefixed<Chan>(
-        &mut self,
-        channel: &mut Chan,
-        max_message_size: usize,
-    ) -> Result<&mut [u8], SessionError>
-    where
-        Chan: AsyncRead + AsyncWrite + Unpin,
-    {
-        // Ensure we were allocated with enough space for `max_message_size` and
-        // its length prefix.
-        assert!(max_message_size <= self.buf.len() - 4);
+    buf.resize_default(len).unwrap();
+    channel
+        .read_exact(buf)
+        .await
+        .map_err(SessionError::Read)?;
 
-        loop {
-            // Do we have a 4-byte length prefix?
-            if self.end - self.start >= 4 {
-                // Extract length
-                let len = u32::from_be_bytes(
-                    self.buf[self.start..self.start + 4].try_into().unwrap(),
-                ) as usize;
-
-                // Reject too-long messages.
-                if len > max_message_size {
-                    return Err(SessionError::TooLong {
-                        max: max_message_size,
-                    });
-                }
-
-                // Do we have the full message?
-                if self.end - self.start - 4 >= len {
-                    let msg =
-                        &mut self.buf[self.start + 4..self.start + 4 + len];
-
-                    // Update `self.start` so we'll discard this message the
-                    // next time `recv_encrypted()` is called.
-                    self.start += 4 + len;
-
-                    return Ok(msg);
-                }
-            }
-
-            // Shift any old data out to minimize the number of times we read
-            // from `channel`.
-            if self.start > 0 {
-                self.buf.copy_within(self.start..self.end, 0);
-                let new_end = self.end - self.start;
-                self.start = 0;
-                self.end = new_end;
-            }
-
-            let n = channel
-                .read(&mut self.buf[self.end..])
-                .await
-                .map_err(SessionError::Read)?;
-            if n == 0 {
-                return Err(SessionError::Closed);
-            }
-            self.end += n;
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct SendBuf {
-    buf: Vec<u8>,
-}
-
-impl SendBuf {
-    fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-
-    // Append `msg` to our buffer, prepended by a length prefix.
-    fn append_message(&mut self, msg: &[u8]) {
-        let prefix =
-            u32::try_from(msg.len()).expect("message length overflows u32");
-        self.buf.extend_from_slice(&prefix.to_be_bytes());
-        self.buf.extend_from_slice(msg);
-    }
-
-    // Write all the buffered data we contain to `channel`, then clear our
-    // buffer.
-    async fn write_all<Chan>(&mut self, channel: &mut Chan) -> io::Result<()>
-    where
-        Chan: AsyncWrite + Unpin,
-    {
-        channel.write_all(&self.buf).await?;
-        self.buf.clear();
-        Ok(())
-    }
+    Ok(())
 }
 
 async fn client_handshake<Chan, T>(
-    channel: &mut Chan,
+    channel: &mut LengthPrefixed<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<T>,
     rot_certs: Ed25519Certificates,
@@ -342,22 +327,13 @@ where
     let mut buf = HandshakeMsgVec::new();
     let (mut handshake, token) =
         ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
-    let mut send_buf = SendBuf::default();
-    let mut recv_buf = RecvBuf::with_capacity(MAX_HANDSHAKE_MSG_SIZE + 4);
 
     // Send the ClientHello
-    send_buf.append_message(&buf);
-    send_buf
-        .write_all(channel)
-        .await
-        .map_err(SessionError::Write)?;
+    send_length_prefixed(channel, &buf).await?;
+    channel.flush().await.map_err(SessionError::Write)?;
 
     // Receive the ServerHello
-    let msg = recv_buf
-        .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
-        .await?;
-    buf.clear();
-    buf.extend_from_slice(msg).unwrap();
+    recv_length_prefixed(channel, &mut buf).await?;
 
     // Handle the ServerHello and retrieve the next action to take
     let mut action = handshake
@@ -369,17 +345,8 @@ where
         action = match action {
             UserAction::Recv(token) => {
                 // If we have buffered data to send, send it before receiving.
-                if !send_buf.is_empty() {
-                    send_buf
-                        .write_all(channel)
-                        .await
-                        .map_err(SessionError::Write)?;
-                }
-                let msg = recv_buf
-                    .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
-                    .await?;
-                buf.clear();
-                buf.extend_from_slice(msg).unwrap();
+                channel.flush().await.map_err(SessionError::Write)?;
+                recv_length_prefixed(channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -388,7 +355,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_buf.append_message(&buf);
+                send_length_prefixed(channel, &buf).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -399,12 +366,7 @@ where
             }
             UserAction::Complete(token) => {
                 // If we have buffered data to send, send it before completing.
-                if !send_buf.is_empty() {
-                    send_buf
-                        .write_all(channel)
-                        .await
-                        .map_err(SessionError::Write)?;
-                }
+                channel.flush().await.map_err(SessionError::Write)?;
                 return Ok((handshake, token));
             }
         }
@@ -412,7 +374,7 @@ where
 }
 
 async fn server_handshake<Chan, T>(
-    channel: &mut Chan,
+    channel: &mut LengthPrefixed<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<T>,
     rot_certs: Ed25519Certificates,
@@ -424,15 +386,10 @@ where
 {
     let (mut handshake, token) =
         ServerHandshake::init(manufacturing_public_key, rot_certs);
-    let mut send_buf = SendBuf::default();
 
     // Receive the ClientHello
     let mut buf = HandshakeMsgVec::new();
-    let mut recv_buf = RecvBuf::with_capacity(MAX_HANDSHAKE_MSG_SIZE + 4);
-    let msg = recv_buf
-        .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
-        .await?;
-    buf.extend_from_slice(msg).unwrap();
+    recv_length_prefixed(channel, &mut buf).await?;
 
     // Handle the ClientHello and retrieve the next action to take
     let mut action = handshake
@@ -444,17 +401,8 @@ where
         action = match action {
             UserAction::Recv(token) => {
                 // If we have buffered data to send, send it before receiving.
-                if !send_buf.is_empty() {
-                    send_buf
-                        .write_all(channel)
-                        .await
-                        .map_err(SessionError::Write)?;
-                }
-                let msg = recv_buf
-                    .recv_length_prefixed(channel, MAX_HANDSHAKE_MSG_SIZE)
-                    .await?;
-                buf.clear();
-                buf.extend_from_slice(msg).unwrap();
+                channel.flush().await.map_err(SessionError::Write)?;
+                recv_length_prefixed(channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -463,7 +411,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_buf.append_message(&buf);
+                send_length_prefixed(channel, &buf).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -474,12 +422,7 @@ where
             }
             UserAction::Complete(token) => {
                 // If we have buffered data to send, send it before completing.
-                if !send_buf.is_empty() {
-                    send_buf
-                        .write_all(channel)
-                        .await
-                        .map_err(SessionError::Write)?;
-                }
+                channel.flush().await.map_err(SessionError::Write)?;
                 return Ok((handshake, token));
             }
         }
@@ -498,9 +441,7 @@ mod tests {
     use sprockets_common::random_buf;
     use tokio::io::DuplexStream;
 
-    async fn bootstrap(
-        max_message_size: usize,
-    ) -> (Session<DuplexStream>, Session<DuplexStream>) {
+    async fn bootstrap() -> (Session<DuplexStream>, Session<DuplexStream>) {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
         let manufacturing_public_key =
             Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
@@ -523,8 +464,7 @@ mod tests {
         thread::spawn(move || client_mgr.run());
         thread::spawn(move || server_mgr.run());
 
-        let (client_stream, server_stream) =
-            tokio::io::duplex(max_message_size + 4 + TAG_SIZE);
+        let (client_stream, server_stream) = tokio::io::duplex(1024);
 
         let client_fut = Session::new_client(
             client_stream,
@@ -532,7 +472,6 @@ mod tests {
             &client_handle,
             client_certs,
             Duration::from_secs(10),
-            max_message_size,
         );
         let server_fut = Session::new_server(
             server_stream,
@@ -540,7 +479,6 @@ mod tests {
             &server_handle,
             server_certs,
             Duration::from_secs(10),
-            max_message_size,
         );
 
         let (client, server) = tokio::join!(client_fut, server_fut);
@@ -555,12 +493,13 @@ mod tests {
 
     #[tokio::test]
     async fn hello_world() {
-        let (mut client, mut server) = bootstrap(32).await;
+        let (mut client, mut server) = bootstrap().await;
+        let mut buf = vec![0; 32];
 
         for i in 0..10 {
             let msg = format!("hello {} from client", i);
             client.send(msg.as_bytes()).await.unwrap();
-            assert_eq!(server.recv().await.unwrap(), msg.as_bytes());
+            assert_eq!(server.recv(&mut buf).await.unwrap(), msg.as_bytes());
 
             // Every other test, also send a message from server -> client.
             if i % 2 == 0 {
@@ -569,48 +508,33 @@ mod tests {
 
             let msg = format!("hello {} from server", i);
             server.send(msg.as_bytes()).await.unwrap();
-            assert_eq!(client.recv().await.unwrap(), msg.as_bytes());
+            assert_eq!(client.recv(&mut buf).await.unwrap(), msg.as_bytes());
         }
     }
 
     #[tokio::test]
     async fn reject_too_long_messages() {
-        let (mut client, mut server) = bootstrap(4).await;
+        let (mut client, mut server) = bootstrap().await;
 
-        // Sending a 4-byte message is fine
-        client.send(b"0123").await.unwrap();
-        assert_eq!(server.recv().await.unwrap(), b"0123");
+        // Sending a 5-byte message is fine...
+        client.send(b"01235").await.unwrap();
 
-        // Trying to send a 5-byte message should fail
+        // ... but trying to recv into a 4-long buffer will fail.
+        let mut buf = vec![0; 4];
         assert!(matches!(
-            client.send(b"01234").await.unwrap_err(),
+            server.recv(&mut buf).await.unwrap_err(),
             SessionError::TooLong { max: 4 }
-        ));
-
-        // Recv should reject messages as soon as it reads a length prefix
-        // greater than 4 + TAG_SIZE bytes; confirm this by grabbing the raw
-        // channel from the client, sending an overlong length prefix, and
-        // confirming an error on the server recv.
-        let length_prefix = (4 + TAG_SIZE + 1) as u32;
-        client
-            .channel
-            .write_all(&length_prefix.to_be_bytes())
-            .await
-            .unwrap();
-
-        assert!(matches!(
-            server.recv().await.unwrap_err(),
-            SessionError::TooLong { max: 20 }
         ));
     }
 
     #[tokio::test]
     async fn reject_too_short_messages() {
-        let (mut client, mut server) = bootstrap(4).await;
+        let (mut client, mut server) = bootstrap().await;
+        let mut buf = vec![0; 1];
 
         // Sending 0-length messages through the normal process is fine...
         client.send(b"").await.unwrap();
-        assert_eq!(server.recv().await.unwrap(), b"");
+        assert_eq!(server.recv(&mut buf).await.unwrap(), b"");
 
         // ... but sending a length prefix that's < TAG_SIZE should fail
         let length_prefix = TAG_SIZE - 1;
@@ -619,83 +543,28 @@ mod tests {
             .write_all(&length_prefix.to_be_bytes())
             .await
             .unwrap();
+        client.channel.flush().await.unwrap();
 
         assert!(matches!(
-            server.recv().await.unwrap_err(),
+            server.recv(&mut buf).await.unwrap_err(),
             SessionError::TooShortForAuthTag
         ));
     }
 
     #[tokio::test]
     async fn detect_remote_end_closing_connection() {
-        let (mut client, server) = bootstrap(4).await;
+        let (mut client, server) = bootstrap().await;
         mem::drop(server);
 
         assert!(matches!(
             client.send(b"hi").await.unwrap_err(),
             SessionError::Write { .. }
         ));
-        assert!(matches!(
-            client.recv().await.unwrap_err(),
-            SessionError::Closed,
-        ));
-    }
-
-    #[tokio::test]
-    async fn recv_is_cancel_safe() {
-        let (mut client, mut server) = bootstrap(32).await;
-
-        // Exploit the fact that we're using an in-memory duplex:
-        //
-        // 1. Send a message.
-        // 2. Grab the underlying receive duplex and pull the message out.
-        // 3. Re-insert the first half of the message.
-        // 4. Try to recv() - wait for it to read the first half, then cancel
-        //    it.
-        // 5. Send the other half of the message.
-        // 6. Try to recv again; it should succeed.
-
-        // 1. Send a message
-        let msg = b"this will be cancelled";
-        client.send(msg).await.unwrap();
-
-        // 2. Grab the underlying receive duplex and pull the message out.
-        let mut buf = vec![0; msg.len() + 4 + TAG_SIZE];
-        server.channel.read_exact(&mut buf).await.unwrap();
-
-        // 3. Re-insert the first half of the message.
-        let (first_half, second_half) = buf.split_at(buf.len() / 2);
-        client.channel.write_all(first_half).await.unwrap();
-
-        // 4. Try to recv() - wait for it to read the first half, then cancel
-        //    it.
-        let start = Instant::now();
-        loop {
-            let check_first_half_read =
-                tokio::time::sleep(Duration::from_millis(50));
-            tokio::select! {
-                result = server.recv() => {
-                    panic!("unexpected recv() return: {:?}", result);
-                }
-                _ = check_first_half_read => {
-                    // see if our internal buffer has grabbed the first half of
-                    // the message; if so we're done (and we just cancelled a
-                    // recv!)
-                    if server.recv_buf.end == first_half.len() {
-                        break;
-                    }
-                    // eventually give up if this test is broken
-                    if start.elapsed() > Duration::from_secs(10) {
-                        panic!("test timeout (waited for 10 seconds)");
-                    }
-                }
+        match client.recv(&mut []).await.unwrap_err() {
+            SessionError::Read(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof)
             }
+            other => panic!("unexpected error {}", other),
         }
-
-        // 5. Send the other half of the message.
-        client.channel.write_all(second_half).await.unwrap();
-
-        // 6. Try to recv again; it should succeed.
-        assert_eq!(server.recv().await.unwrap(), msg);
     }
 }
