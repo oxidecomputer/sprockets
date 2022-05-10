@@ -4,7 +4,6 @@
 
 //! High-level Sprockets session API, akin to a TLS session.
 
-use crate::length_prefixed::LengthPrefixed;
 use crate::rot_manager::RotManagerError;
 use crate::rot_manager::RotManagerHandle;
 use crate::rot_manager::RotTransport;
@@ -31,6 +30,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufStream;
 
 const TAG_SIZE: usize =
     <<ChaCha20Poly1305 as AeadCore>::TagSize as Unsigned>::USIZE;
@@ -60,37 +60,15 @@ pub enum SessionHandshakeError<E: Error> {
 }
 
 pub struct Session<Chan> {
-    // We wrap the `Chan` (typically a `TcpStream`, but can be any
-    // `AsyncRead+AsyncWrite`, such as an in-memory duplex in tests) in a
-    // `LengthPrefixed`, which acts as both a `BufRead`/`BufWrite` around the
-    // inner channel and deals with 4-byte length prefixes prepended to any
-    // chunks read or written.
-    //
-    // This file _also_ adds length prefixes, which means we can end up with
-    // nested length prefixes; for example, during the handshake process where
-    // one side will send multiple messages in a row without waiting for
-    // responses, the underlying bytes sent on the wire will include multiple
-    // coalesced messages:
-    //
-    // ```
-    // [overall_length | length_0 | message_0 | length_1 | message_1 | .. ]
-    // ```
-    //
-    // The primary value of `LengthPrefixed` is currently the buffering it
-    // provides; we could consider using tokio's built-in buffering types
-    // instead. But this provides a path to allowing `Session` itself to
-    // implement `AsyncRead`/`AsyncWrite` with transparent-to-the-caller
-    // encryption (in which case we would need to push the `RawSession` down
-    // into `LengthPrefixed` so that it could encrypt/decrypt each chunk).
-    channel: LengthPrefixed<Chan>,
+    // We want to read/write small buffers (4-byte length prefixes and 16-byte
+    // auth tags), so wrap `channel` in a `BufStream`. This requires us to
+    // remember to flush at times, but allows the otherwise-straightline
+    // read/write code.
+    channel: BufStream<Chan>,
     remote_identity: Identity,
     session: RawSession,
     encrypt_buf: Vec<u8>,
 }
-
-// Size for in-memory buffers; messages larger than this will be chunked, and
-// messages smaller than this can potentially be coalesced.
-const BUFFER_CAPACITY: usize = 8192;
 
 impl<Chan> Session<Chan>
 where
@@ -103,8 +81,7 @@ where
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
-        let mut channel =
-            LengthPrefixed::with_capacity(channel, BUFFER_CAPACITY);
+        let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = client_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -132,8 +109,7 @@ where
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
-        let mut channel =
-            LengthPrefixed::with_capacity(channel, BUFFER_CAPACITY);
+        let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = server_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -216,7 +192,11 @@ where
             .map_err(SessionError::Write)?;
 
         // Flush the channel, forcing writes to the underlying stream.
-        // TODO Should we expose the option to flush or not to the user?
+        //
+        // TODO-perf: Should we expose the option to flush or not to the user?
+        // If most callers are doing paired send/recv it's probably not worth
+        // the API overhead, but if some want to do multiple sends and have them
+        // coaleseced, it would be an easy change for us.
         self.channel.flush().await.map_err(SessionError::Write)?;
 
         Ok(())
@@ -274,24 +254,27 @@ where
 // Helper functions to send/receive length-prefixes messages without an auth tag
 // (used during handshake).
 async fn send_length_prefixed<Chan>(
-    channel: &mut LengthPrefixed<Chan>,
+    channel: &mut BufStream<Chan>,
     msg: &[u8],
 ) -> Result<(), SessionError>
 where
-    Chan: AsyncWrite + Unpin,
+    Chan: AsyncRead + AsyncWrite + Unpin,
 {
     let len = u32::try_from(msg.len()).expect("message overflows u32");
-    channel.write_all(&len.to_be_bytes()).await.map_err(SessionError::Write)?;
+    channel
+        .write_all(&len.to_be_bytes())
+        .await
+        .map_err(SessionError::Write)?;
     channel.write_all(msg).await.map_err(SessionError::Write)?;
     Ok(())
 }
 
 async fn recv_length_prefixed<Chan>(
-    channel: &mut LengthPrefixed<Chan>,
+    channel: &mut BufStream<Chan>,
     buf: &mut HandshakeMsgVec,
 ) -> Result<(), SessionError>
 where
-    Chan: AsyncRead + Unpin,
+    Chan: AsyncRead + AsyncWrite + Unpin,
 {
     let mut prefix = [0; 4];
     channel
@@ -300,20 +283,19 @@ where
         .map_err(SessionError::Read)?;
     let len = u32::from_be_bytes(prefix) as usize;
     if len > buf.capacity() {
-        return Err(SessionError::TooLong { max: buf.capacity() });
+        return Err(SessionError::TooLong {
+            max: buf.capacity(),
+        });
     }
 
     buf.resize_default(len).unwrap();
-    channel
-        .read_exact(buf)
-        .await
-        .map_err(SessionError::Read)?;
+    channel.read_exact(buf).await.map_err(SessionError::Read)?;
 
     Ok(())
 }
 
 async fn client_handshake<Chan, T>(
-    channel: &mut LengthPrefixed<Chan>,
+    channel: &mut BufStream<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<T>,
     rot_certs: Ed25519Certificates,
@@ -344,6 +326,15 @@ where
         action = match action {
             UserAction::Recv(token) => {
                 // If we have buffered data to send, send it before receiving.
+                //
+                // TODO-perf: Flushing here means the server will receive
+                // multiple messages simultaneously. This is better from a local
+                // perspective (fewer sys calls, fewer network packets), but
+                // might actually be slower overall if the remote RoT becomes
+                // the bottleneck and it could've started working sooner if we
+                // sent our earlier messages ASAP. We should profile flushing
+                // here and in `Complete` compared to always flushing in `Send`.
+                // This comment also applies to `server_handshake`.
                 channel.flush().await.map_err(SessionError::Write)?;
                 recv_length_prefixed(channel, &mut buf).await?;
                 handshake
@@ -373,7 +364,7 @@ where
 }
 
 async fn server_handshake<Chan, T>(
-    channel: &mut LengthPrefixed<Chan>,
+    channel: &mut BufStream<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<T>,
     rot_certs: Ed25519Certificates,
