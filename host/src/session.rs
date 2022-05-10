@@ -170,26 +170,15 @@ where
 
         // Compute total message length.
         assert_eq!(tag.len(), TAG_SIZE);
-        let len = u32::try_from(message.len() + TAG_SIZE).map_err(|_| {
-            SessionError::TooLong {
+        if message.len() + TAG_SIZE > u32::MAX as usize {
+            return Err(SessionError::TooLong {
                 max: u32::MAX as usize - TAG_SIZE,
-            }
-        })?;
+            })
+        }
 
         // Write [length | ciphertext | tag] to the underlying channel (which
         // buffers all of these messages).
-        self.channel
-            .write_all(&len.to_be_bytes())
-            .await
-            .map_err(SessionError::Write)?;
-        self.channel
-            .write_all(message)
-            .await
-            .map_err(SessionError::Write)?;
-        self.channel
-            .write_all(&tag)
-            .await
-            .map_err(SessionError::Write)?;
+        send_length_prefixed(&mut self.channel, &[message, &tag]).await?;
 
         // Flush the channel, forcing writes to the underlying stream.
         //
@@ -251,24 +240,37 @@ where
     }
 }
 
-// Helper functions to send/receive length-prefixes messages without an auth tag
-// (used during handshake).
+/// Send a length-prefixed message on `channel`.
+///
+/// The message may be divided up into multiple slides for convenience to the
+/// caller (e.g., separate encryption and auth tag buffers).
+///
+/// Panics if the sum of the lengths of all chunks overflows `u32`; callers
+/// are responsible for keeping the total length below `u32::MAX`.
 async fn send_length_prefixed<Chan>(
     channel: &mut BufStream<Chan>,
-    msg: &[u8],
+    chunks: &[&[u8]],
 ) -> Result<(), SessionError>
 where
     Chan: AsyncRead + AsyncWrite + Unpin,
 {
-    let len = u32::try_from(msg.len()).expect("message overflows u32");
+    let len = chunks.iter().map(|chunk| chunk.len()).sum::<usize>();
+    let len = u32::try_from(len).expect("message length overflows u32");
     channel
         .write_all(&len.to_be_bytes())
         .await
         .map_err(SessionError::Write)?;
-    channel.write_all(msg).await.map_err(SessionError::Write)?;
+    for chunk in chunks {
+        channel
+            .write_all(chunk)
+            .await
+            .map_err(SessionError::Write)?;
+    }
     Ok(())
 }
 
+// Helper function to receive length-prefixed data during the handshake
+// exchange.
 async fn recv_length_prefixed<Chan>(
     channel: &mut BufStream<Chan>,
     buf: &mut HandshakeMsgVec,
@@ -310,7 +312,7 @@ where
         ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
 
     // Send the ClientHello
-    send_length_prefixed(channel, &buf).await?;
+    send_length_prefixed(channel, &[&buf]).await?;
     channel.flush().await.map_err(SessionError::Write)?;
 
     // Receive the ServerHello
@@ -345,7 +347,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_length_prefixed(channel, &buf).await?;
+                send_length_prefixed(channel, &[&buf]).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -401,7 +403,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_length_prefixed(channel, &buf).await?;
+                send_length_prefixed(channel, &[&buf]).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
