@@ -141,7 +141,7 @@ where
         // Copy message into our buffer.
         self.encrypt_buf.clear();
         self.encrypt_buf.extend_from_slice(message);
-        self.send_plaintext(None).await
+        self.encrypt_and_send(None).await
     }
 
     /// Encrypt `message` in place and then send it to the remote side.
@@ -151,13 +151,13 @@ where
         &mut self,
         message: &mut [u8],
     ) -> Result<(), SessionError> {
-        self.send_plaintext(Some(message)).await
+        self.encrypt_and_send(Some(message)).await
     }
 
     // Private helper function to appease the borrow checker: if it's `Some(_)`,
     // it contains the plaintext in a caller-provided buffer; if it's `None`,
     // the plaintext is taken from `self.encrypt_buf`.
-    async fn send_plaintext(
+    async fn encrypt_and_send(
         &mut self,
         plaintext: Option<&mut [u8]>,
     ) -> Result<(), SessionError> {
