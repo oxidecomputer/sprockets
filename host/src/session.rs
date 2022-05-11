@@ -4,6 +4,8 @@
 
 //! High-level Sprockets session API, akin to a TLS session.
 
+mod encrypting_buf_writer;
+
 use crate::rot_manager::RotManagerError;
 use crate::rot_manager::RotManagerHandle;
 use crate::rot_manager::RotTransport;
