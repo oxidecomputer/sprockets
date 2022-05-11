@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+futures = "0.3"
+pin-project = "1.0"
 sprockets-common = { path = "../common", features = ["rand"]}
 sprockets-session = { path = "../session" }
 ring = "0.16.20"
