@@ -2,20 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::time::Instant;
-
 use slog::{error, o, warn, Logger};
 use sprockets_common::msgs::{
     RotOpV1, RotRequestV1, RotResponseV1, RotResultV1,
 };
-use std::error::Error;
 use std::fmt::Debug;
+use std::fmt::Display;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
 /// The mechanism for interacting with the RoT from the host.
 pub trait RotTransport {
-    type Error: Error + Debug + PartialEq;
+    type Error: Display;
 
     /// Send a request to the RoT, returning an error if the deadline is
     /// exceeded in addition to any other possible errors from the transport.
@@ -26,14 +25,14 @@ pub trait RotTransport {
     ) -> Result<(), Self::Error>;
 
     /// Receive a message from an RoT, returning an error if the deadline is
-    // exceeded, in addition to any other possible errors from the transport.
+    /// exceeded, in addition to any other possible errors from the transport.
     fn recv(&mut self, deadline: Instant)
         -> Result<RotResponseV1, Self::Error>;
 }
 
 // An error resulting from communcation with the RotManager
 #[derive(Error, Debug, PartialEq)]
-pub enum RotManagerError<T: Error> {
+pub enum RotManagerError<T: Display> {
     #[error("send to RotManager failed. Is the RotManager running?")]
     SendFailed(RotOpV1),
     #[error("recv from RotManager failed. Is the RotManager running?")]

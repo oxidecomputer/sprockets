@@ -26,7 +26,7 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
-use std::error::Error;
+use std::fmt::Display;
 use std::io;
 use std::pin::Pin;
 use std::task::Context;
@@ -61,7 +61,7 @@ pub enum SessionError {
 }
 
 #[derive(Debug, Error)]
-pub enum SessionHandshakeError<E: Error> {
+pub enum SessionHandshakeError<E: Display> {
     #[error(transparent)]
     SessionError(#[from] SessionError),
     #[error("RoT error: {0:?}")]

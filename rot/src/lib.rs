@@ -173,6 +173,22 @@ pub enum RotSprocketError {
     Hubpack(hubpack::error::Error),
 }
 
+impl core::fmt::Display for RotSprocketError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RotSprocketError::InvalidSerializedReq => {
+                f.write_str("invalid serialized request")
+            }
+            RotSprocketError::DeserializationBufferTooSmall => {
+                f.write_str("deserialization buffer too small")
+            }
+            RotSprocketError::Hubpack(err) => {
+                write!(f, "hubpack error: {}", err)
+            }
+        }
+    }
+}
+
 impl From<hubpack::error::Error> for RotSprocketError {
     fn from(e: hubpack::error::Error) -> Self {
         RotSprocketError::Hubpack(e)
