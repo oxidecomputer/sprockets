@@ -6,8 +6,17 @@ mod rot_manager;
 mod session;
 mod uart;
 
+pub use sprockets_common::certificates::Ed25519Certificate;
 pub use sprockets_common::certificates::Ed25519Certificates;
+pub use sprockets_common::measurements::Measurements;
+pub use sprockets_common::msgs::AddHostMeasurementsError;
+pub use sprockets_common::msgs::GetCertificatesError;
+pub use sprockets_common::msgs::GetMeasurementsError;
+pub use sprockets_common::msgs::RotError;
+pub use sprockets_common::msgs::RotOpV1;
+pub use sprockets_common::msgs::RotResultV1;
 pub use sprockets_common::Ed25519PublicKey;
+pub use sprockets_common::Nonce;
 pub use sprockets_session::Identity;
 
 pub use self::rot_manager::RotManager;
