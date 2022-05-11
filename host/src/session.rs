@@ -9,7 +9,6 @@ mod encrypting_buf_writer;
 
 use crate::rot_manager::RotManagerError;
 use crate::rot_manager::RotManagerHandle;
-use crate::rot_manager::RotTransport;
 use futures::ready;
 use pin_project::pin_project;
 use sprockets_common::certificates::Ed25519Certificates;
@@ -93,13 +92,13 @@ impl<Chan> Session<Chan>
 where
     Chan: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new_client<T: RotTransport>(
+    pub async fn new_client<E: Display>(
         channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
-        rot: &RotManagerHandle<T>,
+        rot: &RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
-    ) -> Result<Self, SessionHandshakeError<T::Error>> {
+    ) -> Result<Self, SessionHandshakeError<E>> {
         let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = client_handshake(
             &mut channel,
@@ -122,13 +121,13 @@ where
         })
     }
 
-    pub async fn new_server<T: RotTransport>(
+    pub async fn new_server<E: Display>(
         channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
-        rot: &RotManagerHandle<T>,
+        rot: &RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
-    ) -> Result<Self, SessionHandshakeError<T::Error>> {
+    ) -> Result<Self, SessionHandshakeError<E>> {
         let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = server_handshake(
             &mut channel,
@@ -218,12 +217,14 @@ impl<Chan: AsyncRead> AsyncRead for Session<Chan> {
     ) -> Poll<io::Result<()>> {
         let me = self.project();
         me.reader.poll_read(me.channel, cx, buf, |buf, tag| {
-            me.session.decrypt_in_place_detached(buf, tag).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("sprockets decryption failed: {err:?}"),
-                )
-            })
+            me.session
+                .decrypt_in_place_detached(buf, tag)
+                .map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("sprockets decryption failed: {err:?}"),
+                    )
+                })
         })
     }
 }
@@ -270,16 +271,16 @@ where
     Ok(())
 }
 
-async fn client_handshake<Chan, T>(
+async fn client_handshake<Chan, E>(
     channel: &mut BufStream<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
-    rot: &RotManagerHandle<T>,
+    rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
     rot_timeout: Duration,
-) -> Result<(ClientHandshake, CompletionToken), SessionHandshakeError<T::Error>>
+) -> Result<(ClientHandshake, CompletionToken), SessionHandshakeError<E>>
 where
     Chan: AsyncRead + AsyncWrite + Unpin,
-    T: RotTransport,
+    E: Display,
 {
     let mut buf = HandshakeMsgVec::new();
     let (mut handshake, token) =
@@ -339,16 +340,16 @@ where
     }
 }
 
-async fn server_handshake<Chan, T>(
+async fn server_handshake<Chan, E>(
     channel: &mut BufStream<Chan>,
     manufacturing_public_key: Ed25519PublicKey,
-    rot: &RotManagerHandle<T>,
+    rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
     rot_timeout: Duration,
-) -> Result<(ServerHandshake, CompletionToken), SessionHandshakeError<T::Error>>
+) -> Result<(ServerHandshake, CompletionToken), SessionHandshakeError<E>>
 where
     Chan: AsyncRead + AsyncWrite + Unpin,
-    T: RotTransport,
+    E: Display,
 {
     let (mut handshake, token) =
         ServerHandshake::init(manufacturing_public_key, rot_certs);
