@@ -81,6 +81,12 @@ pub struct Session<Chan> {
 }
 
 // Buffer size we use for reading/reading to the underlying channel.
+//
+// NOTE: This implicitly sets the maximum chunk size for our encrypted chunks
+// (to `BUFFER_SIZE - 4 - TAG_SIZE`, accounting for the length prefix and auth
+// tag suffix applied to each chunk). Both the reader and writer we create must
+// use the same `BUFFER_SIZE` to avoid runtime mismatches (specifically, the
+// reader will reject chunks larger than its buffer size).
 const BUFFER_SIZE: usize = 8192;
 
 impl<Chan> Session<Chan>

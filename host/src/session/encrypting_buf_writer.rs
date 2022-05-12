@@ -2,6 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! Buffering writer that performs encryption and message chunking.
+//!
+//! [`EncryptingBufWriter`] buffers data (much like a [`tokio::io::BufWriter`]
+//! until either it fills or is explicitly told to flush, at which point it:
+//!
+//! 1. Encrypts the contents of its buffer, which appends an auth tag.
+//! 2. Prepends the length of the chunk (including the auth tag, not including
+//!    the length itself) as a 4-byte u32 in network order.
+//!
+//! and then attempts to flush that encrypted chunk into the underlying writer.
+//! Further writes to the buffer will block until that flush completes.
+
 use super::TAG_SIZE;
 use futures::ready;
 use sprockets_session::Tag;
@@ -25,7 +37,7 @@ impl EncryptingBufWriter {
     pub(super) fn with_capacity(cap: usize) -> Self {
         // Ensure we have room for at least one byte of data.
         assert!(cap > LENGTH_PREFIX_LEN + TAG_SIZE);
-        // Ensure the max message size won't overflow our u32 length prefix.
+        // Ensure the max chunk size won't overflow our u32 length prefix.
         assert!(cap + TAG_SIZE <= u32::MAX as usize);
         Self {
             buf: vec![0; cap].into_boxed_slice(),
@@ -138,9 +150,9 @@ impl EncryptingBufWriter {
         // `poll_write` should always leave room for the auth tag.
         assert!(self.buf.len() - self.copy_pos >= TAG_SIZE);
 
-        // Encrypt this message.
-        let message = &mut self.buf[LENGTH_PREFIX_LEN..self.copy_pos];
-        let tag = encrypt(message)?;
+        // Encrypt this chunk.
+        let chunk = &mut self.buf[LENGTH_PREFIX_LEN..self.copy_pos];
+        let tag = encrypt(chunk)?;
 
         // Append the auth tag into our buffer.
         assert_eq!(tag.len(), TAG_SIZE);
@@ -246,9 +258,9 @@ mod tests {
         // Flush, and confirm we get our expected message.
         tx.flush().await.unwrap();
 
-        let expected_message =
+        let expected_chunk =
             &[b'0' ^ 1, b'1' ^ 1, b'2' ^ 1, b'3' ^ 1, b'4' ^ 1, b'5' ^ 1];
-        let expected_len = expected_message.len() + TAG_SIZE;
+        let expected_len = expected_chunk.len() + TAG_SIZE;
 
         let n = rx.read(&mut buf).await.unwrap();
         assert_eq!(n, expected_len + LENGTH_PREFIX_LEN);
@@ -257,23 +269,23 @@ mod tests {
             (expected_len as u32).to_be_bytes()
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_message.len()],
-            expected_message
+            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_chunk.len()],
+            expected_chunk
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN + expected_message.len()..n],
+            &buf[LENGTH_PREFIX_LEN + expected_chunk.len()..n],
             DUMMY_TAG
         );
 
-        // Writing 12 bytes should flush a first message to the underlying
+        // Writing 12 bytes should flush a first chunk to the underlying
         // buffer.
         let mut message = b"hello world!".to_vec();
         tx.write_all(&message).await.unwrap();
 
         dummy_encrypt(&mut message).unwrap();
 
-        let expected_message = &message[..8];
-        let expected_len = expected_message.len() + TAG_SIZE;
+        let expected_chunk = &message[..8];
+        let expected_len = expected_chunk.len() + TAG_SIZE;
 
         let n = rx.read(&mut buf).await.unwrap();
         assert_eq!(n, expected_len + LENGTH_PREFIX_LEN);
@@ -282,20 +294,20 @@ mod tests {
             (expected_len as u32).to_be_bytes()
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_message.len()],
-            expected_message
+            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_chunk.len()],
+            expected_chunk
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN + expected_message.len()..n],
+            &buf[LENGTH_PREFIX_LEN + expected_chunk.len()..n],
             DUMMY_TAG
         );
 
         // Shutting down the writer should flush the remaining bytes in a new
-        // message.
+        // chunk.
         tx.shutdown().await.unwrap();
 
-        let expected_message = &message[8..];
-        let expected_len = expected_message.len() + TAG_SIZE;
+        let expected_chunk = &message[8..];
+        let expected_len = expected_chunk.len() + TAG_SIZE;
 
         let n = rx.read(&mut buf).await.unwrap();
         assert_eq!(n, expected_len + LENGTH_PREFIX_LEN);
@@ -304,17 +316,17 @@ mod tests {
             (expected_len as u32).to_be_bytes()
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_message.len()],
-            expected_message
+            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_chunk.len()],
+            expected_chunk
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN + expected_message.len()..n],
+            &buf[LENGTH_PREFIX_LEN + expected_chunk.len()..n],
             DUMMY_TAG
         );
     }
 
     #[tokio::test]
-    async fn writing_zero_length_messages_does_not_send_data() {
+    async fn writing_zero_length_data_does_not_send() {
         let (tx, mut rx) = tokio::io::duplex(128);
 
         // Allocate a writer with space for 8 bytes + overhead.
@@ -368,7 +380,7 @@ mod tests {
         let (tx, mut rx) = tokio::io::duplex(128);
 
         // Use an always-failing encryption closure with a buffer sized for a
-        // length=5 message plus overhead.
+        // length=5 chunk plus overhead.
         let mut tx = TestWriter::new(
             tx,
             |_| Err(io::Error::new(io::ErrorKind::Other, "boom")),
@@ -391,12 +403,12 @@ mod tests {
         // to make room.
         tx.write_all(b"56").await.unwrap();
 
-        // Confirm the now-correctly-encrypted original message was flushed.
-        let mut expected_message = b"01234".to_vec();
-        dummy_encrypt(&mut expected_message).unwrap();
+        // Confirm the now-correctly-encrypted original chunk was flushed.
+        let mut expected_chunk = b"01234".to_vec();
+        dummy_encrypt(&mut expected_chunk).unwrap();
 
         let mut buf = [0; 64];
-        let expected_len = expected_message.len() + TAG_SIZE;
+        let expected_len = expected_chunk.len() + TAG_SIZE;
 
         let n = rx.read(&mut buf).await.unwrap();
         assert_eq!(n, expected_len + LENGTH_PREFIX_LEN);
@@ -405,11 +417,11 @@ mod tests {
             (expected_len as u32).to_be_bytes()
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_message.len()],
-            expected_message
+            &buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + expected_chunk.len()],
+            expected_chunk
         );
         assert_eq!(
-            &buf[LENGTH_PREFIX_LEN + expected_message.len()..n],
+            &buf[LENGTH_PREFIX_LEN + expected_chunk.len()..n],
             DUMMY_TAG
         );
     }
