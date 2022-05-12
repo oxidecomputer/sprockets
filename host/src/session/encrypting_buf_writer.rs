@@ -72,7 +72,7 @@ impl EncryptingBufWriter {
 
         // If we return without blocking from `flush_to_inner_if_needed`, two
         // things must be true: We have no encrypted data waiting to be written,
-        // and we have room to read at least one more byte. Sanity check both.
+        // and we have room to store at least one more byte. Sanity check both.
         assert!(self.flush.is_none());
         assert!(!available.is_empty());
 
@@ -97,7 +97,7 @@ impl EncryptingBufWriter {
         // Are we already flushing?
         ready!(self.flush_to_inner_if_needed(inner.as_mut(), cx))?;
 
-        // Do we have unencrypted, unsent data to send?
+        // Do we have unencrypted, unsent data?
         if self.copy_pos > LENGTH_PREFIX_LEN {
             self.flush = Some(self.encrypt_current_buffer(encrypt)?);
             ready!(self.flush_to_inner_if_needed(inner, cx))?;

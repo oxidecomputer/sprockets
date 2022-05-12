@@ -58,29 +58,32 @@ impl DecryptingBufReader {
     {
         loop {
             // Copy from current decrypted chunk, if any.
-            decrypt = match self
-                .copy_from_decrypted_chunk(buf, decrypt)?
-            {
+            decrypt = match self.copy_from_decrypted_chunk(buf, decrypt)? {
                 CopyResult::CopiedDecryptedData => return Poll::Ready(Ok(())),
-                CopyResult::DidNotCopyData(decrypt) => decrypt,
+                CopyResult::DidNotCopyData(decrypt) => {
+                    // If no data was copied, we don't have a complete chunk;
+                    // that implies we have room to read more data. Sanity check
+                    // that invariant.
+                    assert!(self.read_pos < self.buf.len());
+
+                    decrypt
+                }
             };
 
-            // `copy_from_decrypted_chunk` should never return false if our
-            // buffer is full; sanity check.
-            assert!(self.read_pos < self.buf.len());
-
-            // We don't have enough data to decrypt the next chunk; get more
-            // from `inner`.
+            // Read more data from `inner`.
             let mut our_buf = ReadBuf::new(&mut self.buf[self.read_pos..]);
             ready!(inner.as_mut().poll_read(cx, &mut our_buf))?;
 
             let nread = our_buf.filled().len();
             if nread == 0 {
-                // EOF!
-                //
-                // TODO: Should we fail if `self.read_pos != 0`? That would
-                // imply we partially read a chunk and then we got EOF from
-                // `inner` before the chunk was finished.
+                // Should we fail if `self.read_pos != 0`? That would imply we
+                // partially read a chunk and then we got EOF from `inner`
+                // before the chunk was finished. I believe the answer is "no",
+                // because the docs on `AsyncReadExt` note that a return of
+                // `Ok(0)` means "currently at EOF", but that future reads might
+                // return more data. We relay `Ok(0)` to our caller here and let
+                // them decide whether the EOF is expected or if they want to
+                // retry again later.
                 return Poll::Ready(Ok(()));
             }
             self.read_pos += nread;
@@ -149,8 +152,14 @@ impl DecryptingBufReader {
                 buf,
                 &mut self.read_pos,
             ) {
+                // We copied all the data; clear `decrypted_chunk` so we know to
+                // look for the next chunk in the future.
                 self.decrypted_chunk = None;
             }
+
+            // Regardless of whether or not we copied all the decrypted data we
+            // have, we copied _some_ data, which means we must return now
+            // success (before proceeding to checks that could fail).
             return Ok(CopyResult::CopiedDecryptedData);
         }
 
@@ -187,8 +196,8 @@ impl DecryptingBufReader {
             return Ok(CopyResult::DidNotCopyData(decrypt));
         }
 
-        // Extract the chunk subslice (skipping over the length prefix),
-        // and split into ciphertext/tag
+        // Extract the chunk's payload subslice (skipping over the length
+        // prefix), and split into ciphertext/tag
         let bytes = &mut self.buf[LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + len];
         let (chunk, tag) = bytes.split_at_mut(len - TAG_SIZE);
 
@@ -528,7 +537,7 @@ mod tests {
         assert_eq!(rx.buf.decrypted_chunk, None);
 
         // Write final byte; we should now be able to read.
-        tx.write_all(&chunk[chunk.len()-1..]).await.unwrap();
+        tx.write_all(&chunk[chunk.len() - 1..]).await.unwrap();
 
         assert_eq!(rx.read(&mut buf).await.unwrap(), 5);
         assert_eq!(buf.as_slice(), b"hello");
