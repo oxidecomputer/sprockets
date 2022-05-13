@@ -151,6 +151,11 @@ where
         })
     }
 
+    /// Get a reference to the underlying communication channel.
+    pub fn get_ref(&self) -> &Chan {
+        &self.channel
+    }
+
     /// Get the client's remote identity.
     pub fn remote_identity(&self) -> Identity {
         self.remote_identity
