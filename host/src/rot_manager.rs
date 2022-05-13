@@ -46,16 +46,26 @@ pub enum RotManagerError<T: Error> {
 
 /// An API wrapper to send messages to and receive replies from an RotManager
 /// running in a seperate thread.
-pub struct RotManagerHandle<T: RotTransport> {
-    tx: mpsc::Sender<RotManagerMsg<T>>,
+pub struct RotManagerHandle<E: Error> {
+    tx: mpsc::Sender<RotManagerMsg<E>>,
 }
 
-impl<T: RotTransport> RotManagerHandle<T> {
+// We can't `#[derive(Clone)]` because that only provides an implementation if
+// `T: Clone`, but we're cloneable even if `T` is not. Implement by hand.
+impl<E: Error> Clone for RotManagerHandle<E> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+        }
+    }
+}
+
+impl<E: Error> RotManagerHandle<E> {
     pub async fn call(
         &self,
         op: RotOpV1,
         deadline: Instant,
-    ) -> Result<RotResultV1, RotManagerError<T::Error>> {
+    ) -> Result<RotResultV1, RotManagerError<E>> {
         let (reply_tx, reply_rx) = oneshot::channel();
         let msg = RotManagerMsg::RotRequest {
             deadline,
@@ -80,13 +90,12 @@ impl<T: RotTransport> RotManagerHandle<T> {
 
 /// A message handled by the RotManager
 #[derive(Debug)]
-enum RotManagerMsg<T: RotTransport> {
+enum RotManagerMsg<E: Error> {
     // A request to be transmitted to the RotSprocket
     RotRequest {
         deadline: Instant,
         op: RotOpV1,
-        reply_tx:
-            oneshot::Sender<Result<RotResultV1, RotManagerError<T::Error>>>,
+        reply_tx: oneshot::Sender<Result<RotResultV1, RotManagerError<E>>>,
     },
 
     // Shutdown the recv loop
@@ -101,7 +110,7 @@ pub struct RotManager<T: RotTransport> {
 
     // Receive a message from a tokio task with an RotRequestV1 and a tokio
     // oneshot sender for replying.
-    rx: mpsc::Receiver<RotManagerMsg<T>>,
+    rx: mpsc::Receiver<RotManagerMsg<T::Error>>,
 
     // The RotManager sends requests and receives responses over this transport
     // one at a time.
@@ -121,7 +130,7 @@ impl<T: RotTransport> RotManager<T> {
         channel_capacity: usize,
         rot_transport: T,
         logger: Logger,
-    ) -> (RotManager<T>, RotManagerHandle<T>) {
+    ) -> (RotManager<T>, RotManagerHandle<T::Error>) {
         let logger = logger.new(o!("component" => "RotManager"));
         let (tx, rx) = mpsc::channel(channel_capacity);
         (

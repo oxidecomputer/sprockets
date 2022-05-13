@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "hyper-sprockets",
     "rot",
     "host",
     "common",
@@ -7,6 +8,7 @@ members = [
 ]
 
 default-members = [
+    "hyper-sprockets",
     "rot",
     "host",
     "common",
