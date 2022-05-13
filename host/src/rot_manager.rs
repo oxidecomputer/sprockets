@@ -50,6 +50,16 @@ pub struct RotManagerHandle<T: RotTransport> {
     tx: mpsc::Sender<RotManagerMsg<T>>,
 }
 
+// We can't `#[derive(Clone)]` because that only provides an implementation if
+// `T: Clone`, but we're cloneable even if `T` is not. Implement by hand.
+impl<T: RotTransport> Clone for RotManagerHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+        }
+    }
+}
+
 impl<T: RotTransport> RotManagerHandle<T> {
     pub async fn call(
         &self,

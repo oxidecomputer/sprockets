@@ -96,7 +96,7 @@ where
     pub async fn new_client<T: RotTransport>(
         channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
-        rot: &RotManagerHandle<T>,
+        rot: RotManagerHandle<T>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
@@ -104,7 +104,7 @@ where
         let (handshake, completion_token) = client_handshake(
             &mut channel,
             manufacturing_public_key,
-            rot,
+            &rot,
             rot_certs,
             rot_timeout,
         )
@@ -125,7 +125,7 @@ where
     pub async fn new_server<T: RotTransport>(
         channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
-        rot: &RotManagerHandle<T>,
+        rot: RotManagerHandle<T>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<T::Error>> {
@@ -133,7 +133,7 @@ where
         let (handshake, completion_token) = server_handshake(
             &mut channel,
             manufacturing_public_key,
-            rot,
+            &rot,
             rot_certs,
             rot_timeout,
         )
