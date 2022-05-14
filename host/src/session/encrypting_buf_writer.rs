@@ -14,35 +14,37 @@
 //! and then attempts to flush that encrypted chunk into the underlying writer.
 //! Further writes to the buffer will block until that flush completes.
 
-use super::TAG_SIZE;
+use super::aead_write_buf::{AeadCiphertextBuf, AeadPlaintextBuf};
+use derive_more::From;
 use futures::ready;
 use sprockets_session::Tag;
 use std::io;
-use std::mem;
-use std::ops::Range;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use tokio::io::AsyncWrite;
 
-const LENGTH_PREFIX_LEN: usize = mem::size_of::<u32>();
+#[derive(From)]
+enum AeadWriteBuf {
+    Plaintext(AeadPlaintextBuf),
+    Ciphertext {
+        ciphertext: AeadCiphertextBuf,
+        // The amount of data flushed so far
+        flushed: usize,
+    },
+}
 
 pub(super) struct EncryptingBufWriter {
-    buf: Box<[u8]>,
-    copy_pos: usize,
-    flush: Option<Range<usize>>,
+    // Need an option to allow moving from one variant to another
+    buf: Option<AeadWriteBuf>,
 }
 
 impl EncryptingBufWriter {
-    pub(super) fn with_capacity(cap: usize) -> Self {
-        // Ensure we have room for at least one byte of data.
-        assert!(cap > LENGTH_PREFIX_LEN + TAG_SIZE);
-        // Ensure the max chunk size won't overflow our u32 length prefix.
-        assert!(cap + TAG_SIZE <= u32::MAX as usize);
+    pub(super) fn with_capacity(data_cap: usize, tag_len: usize) -> Self {
         Self {
-            buf: vec![0; cap].into_boxed_slice(),
-            copy_pos: LENGTH_PREFIX_LEN,
-            flush: None,
+            buf: Some(
+                AeadPlaintextBuf::with_capacity(data_cap, tag_len).into(),
+            ),
         }
     }
 
@@ -55,116 +57,153 @@ impl EncryptingBufWriter {
     ) -> Poll<io::Result<usize>>
     where
         T: AsyncWrite,
-        F: FnOnce(&mut [u8]) -> io::Result<Tag>,
+        F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
     {
-        let copy_end = self.buf.len() - TAG_SIZE;
-
-        // Flush, if necessary.
-        if self.flush.is_none() && self.copy_pos == copy_end {
-            // We're not currently flushing, but our buffer is full; we need to
-            // encrypt and then flush.
-            self.flush = Some(self.encrypt_current_buffer(encrypt)?);
+        // We guarantee that buf is always `Some`
+        match self.buf.take().unwrap() {
+            AeadWriteBuf::Plaintext(mut plaintext) => {
+                if plaintext.is_full() {
+                    ready!(
+                        self.encrypt_and_flush(inner, cx, plaintext, encrypt)
+                    )?;
+                } else {
+                    let n = plaintext.extend(buf);
+                    self.buf = Some(plaintext.into());
+                    return Poll::Ready(Ok(n));
+                }
+            }
+            AeadWriteBuf::Ciphertext {
+                ciphertext,
+                flushed,
+            } => {
+                ready!(self.flush(inner, cx, ciphertext, flushed))?;
+            }
         }
-        ready!(self.flush_to_inner_if_needed(inner, cx))?;
 
-        // Carve out our remaining available space as a subslice.
-        let available = &mut self.buf[self.copy_pos..copy_end];
-
-        // If we return without blocking from `flush_to_inner_if_needed`, two
-        // things must be true: We have no encrypted data waiting to be written,
-        // and we have room to store at least one more byte. Sanity check both.
-        assert!(self.flush.is_none());
-        assert!(!available.is_empty());
-
-        // Copy as much data as we can from `buf`.
-        let n = usize::min(available.len(), buf.len());
-        available[..n].copy_from_slice(&buf[..n]);
-        self.copy_pos += n;
-
+        // If we reached this point we have flushed a a complete encrypted
+        // frame and have an empty plaintext buffer in `self.buf`. We write
+        // some data into the plaintext buffer and fulfill the expectation of
+        // the caller that if there is no error, they will get back
+        // `Poll::Pending` or `Poll::Ready(Ok(n))`. In this case they will get
+        // back `Poll::Ready` because at least some data will be written into
+        // buf.
+        //
+        // However, as we allow the caller to pass an empty slice in `buf`, they
+        // may get back `Poll::Ready(Ok(0))` which does not indicate an error.
+        let n = self.get_plaintext().extend(buf);
         Poll::Ready(Ok(n))
     }
 
     pub(super) fn poll_flush<T, F>(
         &mut self,
-        mut inner: Pin<&mut T>,
+        inner: Pin<&mut T>,
         cx: &mut Context<'_>,
         encrypt: F,
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite,
-        F: FnOnce(&mut [u8]) -> io::Result<Tag>,
+        F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
     {
-        // Are we already flushing?
-        ready!(self.flush_to_inner_if_needed(inner.as_mut(), cx))?;
-
-        // Do we have unencrypted, unsent data?
-        if self.copy_pos > LENGTH_PREFIX_LEN {
-            self.flush = Some(self.encrypt_current_buffer(encrypt)?);
-            ready!(self.flush_to_inner_if_needed(inner, cx))?;
+        match self.buf.take().unwrap() {
+            AeadWriteBuf::Plaintext(plaintext) => {
+                if plaintext.written() == 0 {
+                    // Nothing to flush
+                    self.buf = Some(plaintext.into());
+                    Poll::Ready(Ok(()))
+                } else {
+                    self.encrypt_and_flush(inner, cx, plaintext, encrypt)
+                }
+            }
+            AeadWriteBuf::Ciphertext {
+                ciphertext,
+                flushed,
+            } => self.flush(inner, cx, ciphertext, flushed),
         }
-
-        Poll::Ready(Ok(()))
     }
 
-    fn flush_to_inner_if_needed<T>(
+    fn get_plaintext(&mut self) -> &mut AeadPlaintextBuf {
+        if let AeadWriteBuf::Plaintext(plaintext) = self.buf.as_mut().unwrap() {
+            plaintext
+        } else {
+            panic!("AeadWriteBuf contains ciphertext, not plaintext")
+        }
+    }
+
+    fn encrypt_and_flush<T, F>(
+        &mut self,
+        inner: Pin<&mut T>,
+        cx: &mut Context<'_>,
+        plaintext: AeadPlaintextBuf,
+        encrypt: F,
+    ) -> Poll<io::Result<()>>
+    where
+        T: AsyncWrite,
+        F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
+    {
+        match plaintext.encrypt(encrypt) {
+            Ok(ciphertext) => self.flush(inner, cx, ciphertext, 0),
+            Err(plaintext) => {
+                self.buf = Some(plaintext.into());
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "encryption failed",
+                )))
+            }
+        }
+    }
+
+    fn flush<T>(
         &mut self,
         mut inner: Pin<&mut T>,
         cx: &mut Context<'_>,
+        ciphertext: AeadCiphertextBuf,
+        mut flushed: usize,
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite,
     {
-        // Do we need to flush?
-        let flush = match self.flush.as_mut() {
-            Some(flush) => flush,
-            None => return Poll::Ready(Ok(())),
-        };
+        let mut ret = Poll::Ready(Ok(()));
 
-        while flush.start < flush.end {
-            // Extract data remaining to flush.
-            let buf = &self.buf[flush.clone()];
-            let n = ready!(inner.as_mut().poll_write(cx, buf))?;
-
-            flush.start += n;
+        // Flush as much of the ciphertext frame as we can.
+        //
+        // We don't short circuit any returns with `ready!` because we need to
+        // ensure `self.buf` gets set to `Some` before returning.
+        while flushed != ciphertext.len() {
+            let buf = &ciphertext.as_slice()[flushed..];
+            match inner.as_mut().poll_write(cx, buf) {
+                Poll::Pending => {
+                    ret = Poll::Pending;
+                    break;
+                }
+                Poll::Ready(Ok(0)) => {
+                    ret = Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write ciphertext",
+                    )));
+                    break;
+                }
+                Poll::Ready(Ok(n)) => {
+                    flushed += n;
+                }
+                Poll::Ready(Err(err)) => {
+                    ret = Poll::Ready(Err(err));
+                    break;
+                }
+            }
         }
 
-        // Flushing complete; reset.
-        self.flush = None;
-        self.copy_pos = LENGTH_PREFIX_LEN;
+        // Are we done flushing?
+        if flushed == ciphertext.len() {
+            // Reset the buffer to allow writing plaintext data again
+            self.buf = Some(AeadPlaintextBuf::from(ciphertext).into());
+        } else {
+            self.buf = Some(AeadWriteBuf::Ciphertext {
+                ciphertext,
+                flushed,
+            });
+        }
 
-        Poll::Ready(Ok(()))
-    }
-
-    fn encrypt_current_buffer<F>(
-        &mut self,
-        encrypt: F,
-    ) -> io::Result<Range<usize>>
-    where
-        F: FnOnce(&mut [u8]) -> io::Result<Tag>,
-    {
-        // We should only be called if we have a nonzero amount of data to
-        // encrypt and we're not currently flushing.
-        assert!(self.copy_pos > LENGTH_PREFIX_LEN);
-        assert!(self.flush.is_none());
-
-        // `poll_write` should always leave room for the auth tag.
-        assert!(self.buf.len() - self.copy_pos >= TAG_SIZE);
-
-        // Encrypt this chunk.
-        let chunk = &mut self.buf[LENGTH_PREFIX_LEN..self.copy_pos];
-        let tag = encrypt(chunk)?;
-
-        // Append the auth tag into our buffer.
-        assert_eq!(tag.len(), TAG_SIZE);
-        self.buf[self.copy_pos..self.copy_pos + TAG_SIZE].copy_from_slice(&tag);
-
-        // Fill in the length prefix. This is guaranteed to fit in `u32` via the
-        // assertions we performed in `with_capacity()`.
-        let len = (self.copy_pos - LENGTH_PREFIX_LEN + TAG_SIZE) as u32;
-        self.buf[..LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
-
-        // Note the subset of the buffer we need to flush.
-        Ok(0..self.copy_pos + TAG_SIZE)
+        ret
     }
 }
 
@@ -172,13 +211,16 @@ impl EncryptingBufWriter {
 mod tests {
     use super::*;
     use pin_project::pin_project;
+    use std::mem;
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
 
+    const LENGTH_PREFIX_LEN: usize = mem::size_of::<u32>();
     const DUMMY_TAG: &[u8] = b"16 byte test tag";
+    const TAG_SIZE: usize = DUMMY_TAG.len();
 
-    fn dummy_encrypt(msg: &mut [u8]) -> io::Result<Tag> {
+    fn dummy_encrypt(msg: &mut [u8]) -> Result<Tag, ()> {
         for b in msg {
             *b ^= 1;
         }
@@ -189,20 +231,20 @@ mod tests {
     struct TestWriter<T> {
         #[pin]
         inner: T,
-        encrypt: fn(&mut [u8]) -> io::Result<Tag>,
+        encrypt: fn(&mut [u8]) -> Result<Tag, ()>,
         buf: EncryptingBufWriter,
     }
 
     impl<T> TestWriter<T> {
         fn new(
             inner: T,
-            encrypt: fn(&mut [u8]) -> io::Result<Tag>,
+            encrypt: fn(&mut [u8]) -> Result<Tag, ()>,
             capacity: usize,
         ) -> Self {
             Self {
                 inner,
                 encrypt,
-                buf: EncryptingBufWriter::with_capacity(capacity),
+                buf: EncryptingBufWriter::with_capacity(capacity, TAG_SIZE),
             }
         }
     }
@@ -240,11 +282,7 @@ mod tests {
         let (tx, mut rx) = tokio::io::duplex(128);
 
         // Allocate a writer with space for 8 bytes + overhead.
-        let mut tx = TestWriter::new(
-            tx,
-            dummy_encrypt,
-            8 + LENGTH_PREFIX_LEN + TAG_SIZE,
-        );
+        let mut tx = TestWriter::new(tx, dummy_encrypt, 8);
 
         // Writing 6 bytes should not flush to the underlying buffer.
         tx.write_all(b"012345").await.unwrap();
@@ -330,11 +368,7 @@ mod tests {
         let (tx, mut rx) = tokio::io::duplex(128);
 
         // Allocate a writer with space for 8 bytes + overhead.
-        let mut tx = TestWriter::new(
-            tx,
-            dummy_encrypt,
-            8 + LENGTH_PREFIX_LEN + TAG_SIZE,
-        );
+        let mut tx = TestWriter::new(tx, dummy_encrypt, 8);
 
         // We can write 0-length buffers into `tx`, but flushing after any
         // number of them should not result in any data being sent.
@@ -359,11 +393,7 @@ mod tests {
         let (tx, _rx) = tokio::io::duplex(128);
 
         // Use an always-failing encryption closure.
-        let mut tx = TestWriter::new(
-            tx,
-            |_| Err(io::Error::new(io::ErrorKind::Other, "boom")),
-            128,
-        );
+        let mut tx = TestWriter::new(tx, |_| Err(()), 128);
 
         // Writing won't fail...
         tx.write_all(b"hello").await.unwrap();
@@ -372,7 +402,7 @@ mod tests {
         let err = tx.flush().await.unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), "boom");
+        assert_eq!(err.to_string(), "encryption failed");
     }
 
     #[tokio::test]
@@ -381,11 +411,7 @@ mod tests {
 
         // Use an always-failing encryption closure with a buffer sized for a
         // length=5 chunk plus overhead.
-        let mut tx = TestWriter::new(
-            tx,
-            |_| Err(io::Error::new(io::ErrorKind::Other, "boom")),
-            5 + LENGTH_PREFIX_LEN + TAG_SIZE,
-        );
+        let mut tx = TestWriter::new(tx, |_| Err(()), 5);
 
         // Write 5 bytes; this should fill the buffer.
         tx.write_all(b"01234").await.unwrap();
@@ -393,7 +419,7 @@ mod tests {
         // Flushing should fail when it tries to encrypt.
         let err = tx.flush().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), "boom");
+        assert_eq!(err.to_string(), "encryption failed");
 
         // Swap out our encryption function for one that works.
         tx.encrypt = dummy_encrypt;
