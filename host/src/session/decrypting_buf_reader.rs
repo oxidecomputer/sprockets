@@ -528,7 +528,7 @@ mod tests {
         // Attempting to read should time out; we haven't received the full
         // chunk and therefore can't decrypt it.
         let mut buf = [0; 5];
-        tokio::time::timeout(Duration::from_millis(100), rx.read(&mut buf))
+        tokio::time::timeout(Duration::from_millis(1), rx.read(&mut buf))
             .await
             .unwrap_err();
 
