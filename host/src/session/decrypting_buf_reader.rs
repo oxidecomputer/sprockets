@@ -276,7 +276,7 @@ mod tests {
         // Append auth tag.
         chunk.extend_from_slice(DUMMY_TAG);
 
-        // Prepent length prefix.
+        // Prepend length prefix.
         let len = chunk.len() as u32;
         chunk.splice(0..0, len.to_be_bytes());
 
