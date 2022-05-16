@@ -59,13 +59,15 @@ impl EncryptingBufWriter {
         T: AsyncWrite,
         F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
     {
-        // We guarantee that buf is always `Some`
+        // We guarantee that buf is always `Some`; each arm sets it before
+        // leaving the `match`.
         match self.buf.take().unwrap() {
             AeadWriteBuf::Plaintext(mut plaintext) => {
                 if plaintext.is_full() {
-                    ready!(
-                        self.encrypt_and_flush(inner, cx, plaintext, encrypt)
-                    )?;
+                    let (new_buf, ret) =
+                        encrypt_and_flush(inner, cx, plaintext, encrypt);
+                    self.buf = Some(new_buf);
+                    ready!(ret)?;
                 } else {
                     let n = plaintext.extend(buf);
                     self.buf = Some(plaintext.into());
@@ -76,7 +78,9 @@ impl EncryptingBufWriter {
                 ciphertext,
                 flushed,
             } => {
-                ready!(self.flush(inner, cx, ciphertext, flushed))?;
+                let (new_buf, ret) = flush(inner, cx, ciphertext, flushed);
+                self.buf = Some(new_buf);
+                ready!(ret)?;
             }
         }
 
@@ -104,6 +108,8 @@ impl EncryptingBufWriter {
         T: AsyncWrite,
         F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
     {
+        // We guarantee that buf is always `Some`; each arm sets it before
+        // leaving the `match`.
         match self.buf.take().unwrap() {
             AeadWriteBuf::Plaintext(plaintext) => {
                 if plaintext.written() == 0 {
@@ -111,13 +117,20 @@ impl EncryptingBufWriter {
                     self.buf = Some(plaintext.into());
                     Poll::Ready(Ok(()))
                 } else {
-                    self.encrypt_and_flush(inner, cx, plaintext, encrypt)
+                    let (new_buf, ret) =
+                        encrypt_and_flush(inner, cx, plaintext, encrypt);
+                    self.buf = Some(new_buf);
+                    ret
                 }
             }
             AeadWriteBuf::Ciphertext {
                 ciphertext,
                 flushed,
-            } => self.flush(inner, cx, ciphertext, flushed),
+            } => {
+                let (new_buf, ret) = flush(inner, cx, ciphertext, flushed);
+                self.buf = Some(new_buf);
+                ret
+            }
         }
     }
 
@@ -128,83 +141,78 @@ impl EncryptingBufWriter {
             panic!("AeadWriteBuf contains ciphertext, not plaintext")
         }
     }
+}
 
-    fn encrypt_and_flush<T, F>(
-        &mut self,
-        inner: Pin<&mut T>,
-        cx: &mut Context<'_>,
-        plaintext: AeadPlaintextBuf,
-        encrypt: F,
-    ) -> Poll<io::Result<()>>
-    where
-        T: AsyncWrite,
-        F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
-    {
-        match plaintext.encrypt(encrypt) {
-            Ok(ciphertext) => self.flush(inner, cx, ciphertext, 0),
-            Err(plaintext) => {
-                self.buf = Some(plaintext.into());
-                Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "encryption failed",
-                )))
+fn encrypt_and_flush<T, F>(
+    inner: Pin<&mut T>,
+    cx: &mut Context<'_>,
+    plaintext: AeadPlaintextBuf,
+    encrypt: F,
+) -> (AeadWriteBuf, Poll<io::Result<()>>)
+where
+    T: AsyncWrite,
+    F: FnOnce(&mut [u8]) -> Result<Tag, ()>,
+{
+    match plaintext.encrypt(encrypt) {
+        Ok(ciphertext) => flush(inner, cx, ciphertext, 0),
+        Err(plaintext) => (
+            plaintext.into(),
+            Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "encryption failed",
+            ))),
+        ),
+    }
+}
+
+fn flush<T>(
+    mut inner: Pin<&mut T>,
+    cx: &mut Context<'_>,
+    ciphertext: AeadCiphertextBuf,
+    mut flushed: usize,
+) -> (AeadWriteBuf, Poll<io::Result<()>>)
+where
+    T: AsyncWrite,
+{
+    let mut ret = Poll::Ready(Ok(()));
+
+    // Flush as much of the ciphertext frame as we can.
+    while flushed != ciphertext.len() {
+        let buf = &ciphertext.as_slice()[flushed..];
+        match inner.as_mut().poll_write(cx, buf) {
+            Poll::Pending => {
+                ret = Poll::Pending;
+                break;
+            }
+            Poll::Ready(Ok(0)) => {
+                ret = Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write ciphertext",
+                )));
+                break;
+            }
+            Poll::Ready(Ok(n)) => {
+                flushed += n;
+            }
+            Poll::Ready(Err(err)) => {
+                ret = Poll::Ready(Err(err));
+                break;
             }
         }
     }
 
-    fn flush<T>(
-        &mut self,
-        mut inner: Pin<&mut T>,
-        cx: &mut Context<'_>,
-        ciphertext: AeadCiphertextBuf,
-        mut flushed: usize,
-    ) -> Poll<io::Result<()>>
-    where
-        T: AsyncWrite,
-    {
-        let mut ret = Poll::Ready(Ok(()));
-
-        // Flush as much of the ciphertext frame as we can.
-        //
-        // We don't short circuit any returns with `ready!` because we need to
-        // ensure `self.buf` gets set to `Some` before returning.
-        while flushed != ciphertext.len() {
-            let buf = &ciphertext.as_slice()[flushed..];
-            match inner.as_mut().poll_write(cx, buf) {
-                Poll::Pending => {
-                    ret = Poll::Pending;
-                    break;
-                }
-                Poll::Ready(Ok(0)) => {
-                    ret = Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::WriteZero,
-                        "failed to write ciphertext",
-                    )));
-                    break;
-                }
-                Poll::Ready(Ok(n)) => {
-                    flushed += n;
-                }
-                Poll::Ready(Err(err)) => {
-                    ret = Poll::Ready(Err(err));
-                    break;
-                }
-            }
+    // Are we done flushing?
+    let new_buf = if flushed == ciphertext.len() {
+        // Reset the buffer to allow writing plaintext data again
+        AeadPlaintextBuf::from(ciphertext).into()
+    } else {
+        AeadWriteBuf::Ciphertext {
+            ciphertext,
+            flushed,
         }
+    };
 
-        // Are we done flushing?
-        if flushed == ciphertext.len() {
-            // Reset the buffer to allow writing plaintext data again
-            self.buf = Some(AeadPlaintextBuf::from(ciphertext).into());
-        } else {
-            self.buf = Some(AeadWriteBuf::Ciphertext {
-                ciphertext,
-                flushed,
-            });
-        }
-
-        ret
-    }
+    (new_buf, ret)
 }
 
 #[cfg(test)]
