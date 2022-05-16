@@ -135,10 +135,6 @@ impl<T, E: Error> SprocketsAcceptor<T, E> {
         rot_handle: RotManagerHandle<E>,
         rot_timeout: Duration,
     ) -> Self {
-        // TODO: We could ask the RoT for its certs instead of requiring our
-        // caller to? We'd be exchanging an arg for making ourselves fallible,
-        // plus every acceptor created would re-query the RoT. I think the way
-        // we have it now is better? Remove this comment after PR review.
         Self {
             listener,
             manufacturing_public_key,
