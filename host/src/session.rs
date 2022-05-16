@@ -4,6 +4,7 @@
 
 //! High-level Sprockets session API, akin to a TLS session.
 
+mod aead_write_buf;
 mod decrypting_buf_reader;
 mod encrypting_buf_writer;
 
@@ -79,13 +80,10 @@ pub struct Session<Chan> {
     reader: DecryptingBufReader,
 }
 
-// Buffer size we use for reading/reading to the underlying channel.
+// Buffer size we use for reading/writing encrypted frames to the underlying channel.
 //
-// NOTE: This implicitly sets the maximum chunk size for our encrypted chunks
-// (to `BUFFER_SIZE - 4 - TAG_SIZE`, accounting for the length prefix and auth
-// tag suffix applied to each chunk). Both the reader and writer we create must
-// use the same `BUFFER_SIZE` to avoid runtime mismatches (specifically, the
-// reader will reject chunks larger than its buffer size).
+// NOTE: The actual size of the buffer is the size of the frame which includes a
+// 4 byte size header and an AEAD tag trailer of `TAG_SIZE`.
 const BUFFER_SIZE: usize = 8192;
 
 impl<Chan> Session<Chan>
@@ -163,17 +161,12 @@ where
 
 // Helper function to avoid repeating this closure in each of the `AsyncWrite`
 // methods below.
+//
+// Encryption errors are opaque to avoid leaking info so we return `()`.
 fn encrypt_via_session(
     session: &mut RawSession,
-) -> impl FnOnce(&mut [u8]) -> io::Result<Tag> + '_ {
-    |buf| {
-        session.encrypt_in_place_detached(buf).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("sprockets encryption failed: {err:?}"),
-            )
-        })
-    }
+) -> impl FnOnce(&mut [u8]) -> Result<Tag, ()> + '_ {
+    |buf| session.encrypt_in_place_detached(buf).map_err(|_| ())
 }
 
 impl<Chan: AsyncWrite> AsyncWrite for Session<Chan> {
@@ -222,12 +215,14 @@ impl<Chan: AsyncRead> AsyncRead for Session<Chan> {
     ) -> Poll<io::Result<()>> {
         let me = self.project();
         me.reader.poll_read(me.channel, cx, buf, |buf, tag| {
-            me.session.decrypt_in_place_detached(buf, tag).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("sprockets decryption failed: {err:?}"),
-                )
-            })
+            me.session
+                .decrypt_in_place_detached(buf, tag)
+                .map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("sprockets decryption failed: {err:?}"),
+                    )
+                })
         })
     }
 }
@@ -438,14 +433,14 @@ mod tests {
         let client_fut = Session::new_client(
             client_stream,
             manufacturing_public_key,
-            &client_handle,
+            client_handle.clone(),
             client_certs,
             Duration::from_secs(10),
         );
         let server_fut = Session::new_server(
             server_stream,
             manufacturing_public_key,
-            &server_handle,
+            server_handle.clone(),
             server_certs,
             Duration::from_secs(10),
         );
