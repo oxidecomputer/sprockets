@@ -6,7 +6,12 @@ mod rot_manager;
 mod session;
 mod uart;
 
+pub use sprockets_common::certificates::Ed25519Certificate;
 pub use sprockets_common::certificates::Ed25519Certificates;
+pub use sprockets_common::msgs::RotOpV1;
+pub use sprockets_common::msgs::RotRequestV1;
+pub use sprockets_common::msgs::RotResponseV1;
+pub use sprockets_common::msgs::RotResultV1;
 pub use sprockets_common::Ed25519PublicKey;
 pub use sprockets_session::Identity;
 
