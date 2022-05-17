@@ -438,14 +438,14 @@ mod tests {
         let client_fut = Session::new_client(
             client_stream,
             manufacturing_public_key,
-            &client_handle,
+            client_handle.clone(),
             client_certs,
             Duration::from_secs(10),
         );
         let server_fut = Session::new_server(
             server_stream,
             manufacturing_public_key,
-            &server_handle,
+            server_handle.clone(),
             server_certs,
             Duration::from_secs(10),
         );
