@@ -18,8 +18,8 @@ use std::cell::Cell;
 use std::io;
 use std::ops::Range;
 
-// The location wPlaintextntext/ciphertext start inside `AeadPlaintextBuf` and
-// `AeadCiphertextBuf`.
+// The location that plainntext/ciphertext start inside `AeadPlaintextFrameBuf`
+// and `AeadCiphertextFrameBuf`.
 const DATA_START: usize = 4;
 use super::TAG_SIZE;
 use sprockets_session::Tag;
@@ -68,13 +68,6 @@ impl AeadCiphertextFrameBuf {
     /// Return a mutable slice of free space at the end of the buffer
     pub fn unfilled_mut(&mut self) -> &mut [u8] {
         &mut self.buf[self.read_pos..]
-    }
-
-    // Return the amount of free space at the end of the buffer
-    // Only used in tests
-    #[allow(dead_code)]
-    pub fn remaining(&self) -> usize {
-        self.buf.len() - self.read_pos
     }
 
     /// Return `Ok(true)` if at least a full frame has been read into
@@ -135,7 +128,9 @@ impl AeadCiphertextFrameBuf {
     where
         F: FnOnce(&mut [u8], &Tag) -> Result<(), ()>,
     {
-        let len = self.frame_length.get().unwrap();
+        let len = self.frame_length.get().expect(
+            "ready_to_decrypt must return true before calling decrypt_frame",
+        );
         assert!(self.read_pos >= len + DATA_START);
 
         let frame_end = DATA_START + len;
@@ -173,11 +168,6 @@ impl AeadPlaintextFrameBuf {
     // Return the remainder of unread plaintext data of the frame
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[self.plaintext.start..self.plaintext.end]
-    }
-
-    // Return the length of the remaining plaintext to be copied
-    pub fn num_bytes_to_copy(&self) -> usize {
-        self.plaintext.end - self.plaintext.start
     }
 
     // Advance the start of the plaintext slice to reflect data that has already

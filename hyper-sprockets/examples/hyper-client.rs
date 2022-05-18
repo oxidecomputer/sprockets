@@ -27,10 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let log = Logger::root(drain, o!());
 
     // Simulate an RoT.
-    let rot = SimulatedRot::new(
-        DEVICE_ID_SEED,
-        log.new(o!("context" => "sim-rot")),
-    );
+    let rot =
+        SimulatedRot::new(DEVICE_ID_SEED, log.new(o!("context" => "sim-rot")));
 
     // Wrap a hyper HttpConnector in our sprockets adaptor.
     let connector = SprocketsConnector::new(

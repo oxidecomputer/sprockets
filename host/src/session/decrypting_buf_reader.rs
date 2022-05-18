@@ -102,8 +102,9 @@ fn copy_plaintext(
     buf: &mut ReadBuf<'_>,
 ) -> AeadReadBuf {
     // Copy as much data as we can.
-    let n = usize::min(buf.remaining(), plaintext.num_bytes_to_copy());
-    buf.put_slice(&plaintext.as_slice()[..n]);
+    let plaintext_to_copy = plaintext.as_slice();
+    let n = usize::min(buf.remaining(), plaintext_to_copy.len());
+    buf.put_slice(&plaintext_to_copy[..n]);
     plaintext.advance(n);
 
     // Should we transition back to ciphertext reading?
@@ -187,7 +188,7 @@ mod tests {
         }
 
         // Return the ciphertext data so we can do some white box inspection
-        fn get_ciphertext(&self) -> &AeadCiphertextFrameBuf {
+        fn get_ciphertext_mut(&mut self) -> &mut AeadCiphertextFrameBuf {
             match self {
                 Self::Ciphertext(ciphertext) => ciphertext,
                 _ => panic!("Not ciphertext!"),
@@ -323,7 +324,7 @@ mod tests {
                     let unread_index = i + 1;
                     let plaintext =
                         rx.buf.buf.as_ref().unwrap().get_plaintext();
-                    assert_eq!(plaintext.num_bytes_to_copy(), 4 - unread_index);
+                    assert_eq!(plaintext.as_slice().len(), 4 - unread_index);
                     assert_eq!(plaintext.is_empty(), false);
                     assert_eq!(
                         plaintext.as_slice(),
@@ -336,11 +337,11 @@ mod tests {
                 3 => {
                     // We should have a ciphertext frame
                     let ciphertext =
-                        rx.buf.buf.as_ref().unwrap().get_ciphertext();
+                        rx.buf.buf.as_mut().unwrap().get_ciphertext_mut();
 
                     // The remaining space is the entire buffer
                     assert_eq!(
-                        ciphertext.remaining(),
+                        ciphertext.unfilled_mut().len(),
                         4 + LENGTH_PREFIX_LEN + TAG_SIZE
                     );
                     assert_eq!(false, ciphertext.ready_to_decrypt().unwrap());
@@ -350,7 +351,7 @@ mod tests {
                     let unread_index = i + 1;
                     let plaintext =
                         rx.buf.buf.as_ref().unwrap().get_plaintext();
-                    assert_eq!(plaintext.num_bytes_to_copy(), 8 - unread_index);
+                    assert_eq!(plaintext.as_slice().len(), 8 - unread_index);
                     assert_eq!(plaintext.is_empty(), false);
                     assert_eq!(
                         plaintext.as_slice(),
@@ -361,11 +362,11 @@ mod tests {
                 7 => {
                     // We should have a ciphertext frame
                     let ciphertext =
-                        rx.buf.buf.as_ref().unwrap().get_ciphertext();
+                        rx.buf.buf.as_mut().unwrap().get_ciphertext_mut();
 
                     // The remaining space is the entire buffer
                     assert_eq!(
-                        ciphertext.remaining(),
+                        ciphertext.unfilled_mut().len(),
                         4 + LENGTH_PREFIX_LEN + TAG_SIZE
                     );
                     assert_eq!(false, ciphertext.ready_to_decrypt().unwrap());
@@ -475,12 +476,12 @@ mod tests {
 
         // Sanity check internal state.
         // We should have a ciphertext frame
-        let ciphertext = rx.buf.buf.as_ref().unwrap().get_ciphertext();
+        let ciphertext = rx.buf.buf.as_mut().unwrap().get_ciphertext_mut();
 
         let buf_size = 16 + LENGTH_PREFIX_LEN + TAG_SIZE;
         let expected = buf_size - (chunk.len() - 1);
 
-        assert_eq!(ciphertext.remaining(), expected);
+        assert_eq!(ciphertext.unfilled_mut().len(), expected);
         assert_eq!(false, ciphertext.ready_to_decrypt().unwrap());
 
         // Write final byte; we should now be able to read.
