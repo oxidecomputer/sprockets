@@ -35,13 +35,6 @@ pub(super) struct DecryptingBufReader {
     buf: Option<AeadReadBuf>,
 }
 
-/// Indicate whether the AeadReadBuf needs to switch variants
-enum NeedsTransition {
-    ToPlaintext,
-    ToCiphertext,
-    False,
-}
-
 impl DecryptingBufReader {
     pub(super) fn with_capacity(cap: usize) -> Self {
         Self {
@@ -60,76 +53,44 @@ impl DecryptingBufReader {
         T: AsyncRead,
         F: FnOnce(&mut [u8], &Tag) -> Result<(), ()>,
     {
-        let mut decrypt = Some(decrypt);
+        let mut ciphertext = match self.buf.take().unwrap() {
+            AeadReadBuf::Ciphertext(ciphertext) => ciphertext,
+            AeadReadBuf::Plaintext(plaintext) => {
+                self.buf = Some(copy_plaintext(plaintext, buf));
+                return Poll::Ready(Ok(()));
+            }
+        };
 
-        loop {
-            let needs_transition = match self.buf.as_mut().unwrap() {
-                AeadReadBuf::Ciphertext(ciphertext) => {
-                    if !ready!(read_until_ready_to_decrypt(
-                        ciphertext, &mut inner, cx
-                    ))? {
-                        // 0 bytes were read from `inner`
-                        return Poll::Ready(Ok(()));
-                    }
-                    // We have a complete frame to decrypt
-                    NeedsTransition::ToPlaintext
-                }
-                AeadReadBuf::Plaintext(plaintext) => {
-                    copy_plaintext(plaintext, buf)
-                }
-            };
-
-            match needs_transition {
-                NeedsTransition::ToCiphertext => {
-                    // We've already copied all the plaintext into `buf`
-                    let _ = self.transition(decrypt)?;
-                    return Poll::Ready(Ok(()));
-                }
-                NeedsTransition::ToPlaintext => {
-                    // Decrypt the ciphertext
-                    decrypt = self.transition(decrypt)?;
-                }
-                NeedsTransition::False => {
-                    return Poll::Ready(Ok(()));
-                }
+        match read_until_ready_to_decrypt(&mut ciphertext, &mut inner, cx) {
+            Poll::Ready(Ok(true)) => {
+                // We're ready to decrypt; fall through
+            }
+            Poll::Ready(Ok(false)) => {
+                // We read `Ok(0)` from `inner`; bubble that up to our caller
+                self.buf = Some(ciphertext.into());
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Ready(Err(err)) => {
+                self.buf = Some(ciphertext.into());
+                return Poll::Ready(Err(err));
+            }
+            Poll::Pending => {
+                self.buf = Some(ciphertext.into());
+                return Poll::Pending;
             }
         }
-    }
 
-    // Transition from ciphertext to plaintext or vice versa
-    //
-    // Always consume `decrypt` and return Ok(None). This allows us to loop in
-    // the caller to reuse decrypt. This is safe because each transition can
-    // only occur once, and we only require decryption for the transition from
-    // ciphertext to plaintext.
-    //
-    /// Return an error if decryption fails.
-    fn transition<F>(
-        &mut self,
-        decrypt: Option<F>,
-    ) -> Result<Option<F>, io::Error>
-    where
-        F: FnOnce(&mut [u8], &Tag) -> Result<(), ()>,
-    {
-        match self.buf.take().unwrap() {
-            AeadReadBuf::Ciphertext(ciphertext) => {
-                match ciphertext.decrypt_frame(decrypt.unwrap()) {
-                    Ok(plaintext) => {
-                        self.buf = Some(plaintext.into());
-                        Ok(None)
-                    }
-                    Err(ciphertext) => {
-                        self.buf = Some(ciphertext.into());
-                        Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "decryption failed",
-                        ))
-                    }
-                }
+        match ciphertext.decrypt_frame(decrypt) {
+            Ok(plaintext) => {
+                self.buf = Some(copy_plaintext(plaintext, buf));
+                Poll::Ready(Ok(()))
             }
-            AeadReadBuf::Plaintext(plaintext) => {
-                self.buf = Some(AeadCiphertextFrameBuf::from(plaintext).into());
-                Ok(None)
+            Err(ciphertext) => {
+                self.buf = Some(ciphertext.into());
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "decryption failed",
+                )))
             }
         }
     }
@@ -137,9 +98,9 @@ impl DecryptingBufReader {
 
 // Copy plaintext data into the user's buffer.
 fn copy_plaintext(
-    plaintext: &mut AeadPlaintextFrameBuf,
+    mut plaintext: AeadPlaintextFrameBuf,
     buf: &mut ReadBuf<'_>,
-) -> NeedsTransition {
+) -> AeadReadBuf {
     // Copy as much data as we can.
     let n = usize::min(buf.remaining(), plaintext.num_bytes_to_copy());
     buf.put_slice(&plaintext.as_slice()[..n]);
@@ -147,9 +108,9 @@ fn copy_plaintext(
 
     // Should we transition back to ciphertext reading?
     if plaintext.is_empty() {
-        NeedsTransition::ToCiphertext
+        AeadReadBuf::Ciphertext(plaintext.into())
     } else {
-        NeedsTransition::False
+        AeadReadBuf::Plaintext(plaintext)
     }
 }
 
@@ -162,7 +123,7 @@ where
     T: AsyncRead,
 {
     loop {
-        // We check befor reading because there may be a complete
+        // We check before reading because there may be a complete
         // frame already from a `read` of a prior frame's ciphertext.
         //
         // Without this check, the caller could see that it read 0 bytes, even
