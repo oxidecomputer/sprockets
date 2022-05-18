@@ -11,7 +11,7 @@
 //!
 //! Ciphertext is buffered until a complete frame is read. Because read calls
 //! may read data from the next frame, this data may be buffered as well. When a
-//! complete fPlaintextecrypted, any extra data from the next frame is shifted
+//! complete plaintext is copied, any extra data from the next frame is shifted
 //! to the beginning of the buffer.
 
 use std::cell::Cell;
