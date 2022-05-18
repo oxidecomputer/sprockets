@@ -9,13 +9,13 @@ use hyper::Body;
 use hyper::Request;
 use hyper::Response;
 use hyper::Server;
+use hyper_sprockets::server::SprocketsAcceptor;
 use slog::o;
 use slog::Drain;
 use slog::Logger;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
-use hyper_sprockets::server::SprocketsAcceptor;
 
 mod common;
 
@@ -37,10 +37,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log = Logger::root(drain, o!());
 
     // Simulate an RoT.
-    let rot = SimulatedRot::new(
-        DEVICE_ID_SEED,
-        log.new(o!("context" => "sim-rot")),
-    );
+    let rot =
+        SimulatedRot::new(DEVICE_ID_SEED, log.new(o!("context" => "sim-rot")));
 
     // We'll bind to 127.0.0.1:3000
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));

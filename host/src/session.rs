@@ -4,6 +4,7 @@
 
 //! High-level Sprockets session API, akin to a TLS session.
 
+mod aead_read_buf;
 mod aead_write_buf;
 mod decrypting_buf_reader;
 mod encrypting_buf_writer;
@@ -217,12 +218,7 @@ impl<Chan: AsyncRead> AsyncRead for Session<Chan> {
         me.reader.poll_read(me.channel, cx, buf, |buf, tag| {
             me.session
                 .decrypt_in_place_detached(buf, tag)
-                .map_err(|err| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("sprockets decryption failed: {err:?}"),
-                    )
-                })
+                .map_err(|_| ())
         })
     }
 }
