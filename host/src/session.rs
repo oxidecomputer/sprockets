@@ -189,9 +189,13 @@ impl<Chan: AsyncWrite> AsyncWrite for Session<Chan> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        let me = self.project();
-        me.writer
-            .poll_flush(me.channel, cx, encrypt_via_session(me.session))
+        let mut me = self.project();
+        ready!(me.writer.poll_flush(
+            me.channel.as_mut(),
+            cx,
+            encrypt_via_session(me.session)
+        ))?;
+        me.channel.poll_flush(cx)
     }
 
     fn poll_shutdown(
