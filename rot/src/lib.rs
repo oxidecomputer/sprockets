@@ -179,6 +179,23 @@ impl From<hubpack::error::Error> for RotSprocketError {
     }
 }
 
+impl core::fmt::Display for RotSprocketError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RotSprocketError::InvalidSerializedReq => {
+                f.write_str("invalid serialized request")
+            }
+            RotSprocketError::DeserializationBufferTooSmall => {
+                f.write_str("deserialization buffer too small")
+            }
+            RotSprocketError::Hubpack(err) => {
+                f.write_str("hubpack error: ")?;
+                err.fmt(f)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +343,11 @@ mod tests {
         } else {
             panic!();
         }
+    }
+
+    #[test]
+    fn error_display_impl_forwards_hubpack_errors() {
+        let err = RotSprocketError::Hubpack(hubpack::error::Error::Truncated);
+        assert_eq!(err.to_string(), "hubpack error: truncated");
     }
 }

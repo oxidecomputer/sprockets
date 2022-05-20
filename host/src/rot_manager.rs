@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 /// The mechanism for interacting with the RoT from the host.
 pub trait RotTransport {
-    type Error: Error + Debug + PartialEq;
+    type Error: Error;
 
     /// Send a request to the RoT, returning an error if the deadline is
     /// exceeded in addition to any other possible errors from the transport.

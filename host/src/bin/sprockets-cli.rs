@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![cfg_attr(not(feature = "uart"), allow(dead_code, unused_imports))]
+
 use clap::Parser;
 use sprockets_common::msgs::{RotOpV1, RotRequestV1};
 use sprockets_common::Nonce;
-use sprockets_host::Uart;
 
 #[derive(Parser, Debug)]
 #[clap(version, about, long_about = None)]
@@ -27,9 +28,15 @@ enum Op {
     GetMeasurements,
 }
 
+#[cfg(not(feature = "uart"))]
+fn main () -> anyhow::Result<()> {
+    anyhow::bail!("sprockets-cli requires `uart` feature")
+}
+
+#[cfg(feature = "uart")]
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let mut uart = Uart::attach(&args.path, args.baud_rate)?;
+    let mut uart = sprockets_host::Uart::attach(&args.path, args.baud_rate)?;
 
     let op = match args.op {
         Op::GetCertificates => RotOpV1::GetCertificates,

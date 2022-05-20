@@ -4,9 +4,16 @@
 
 mod rot_manager;
 mod session;
+
+#[cfg(feature = "uart")]
 mod uart;
 
+pub use sprockets_common::certificates::Ed25519Certificate;
 pub use sprockets_common::certificates::Ed25519Certificates;
+pub use sprockets_common::msgs::RotOpV1;
+pub use sprockets_common::msgs::RotRequestV1;
+pub use sprockets_common::msgs::RotResponseV1;
+pub use sprockets_common::msgs::RotResultV1;
 pub use sprockets_common::Ed25519PublicKey;
 pub use sprockets_session::Identity;
 
@@ -17,4 +24,6 @@ pub use self::rot_manager::RotTransport;
 pub use self::session::Session;
 pub use self::session::SessionError;
 pub use self::session::SessionHandshakeError;
+
+#[cfg(feature = "uart")]
 pub use self::uart::Uart;

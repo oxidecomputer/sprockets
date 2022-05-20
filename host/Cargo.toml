@@ -9,17 +9,19 @@ pin-project = "1.0"
 sprockets-common = { path = "../common", features = ["rand"]}
 sprockets-session = { path = "../session" }
 ring = "0.16.20"
-hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
+hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git", optional = true }
 derive_more = "0.99.17"
 serde = { version = "1.0.136", features = ["derive"]  }
-serde-big-array = { version = "0.3.2" }
-serialport = "4.0.1"
+serialport = { version = "4.0.1", optional = true }
 clap = { version = "3.1", features = ["derive"] }
-corncobs = { version = "0.1.1", features = ["std"] }
+corncobs = { version = "0.1.1", features = ["std"], optional = true }
 thiserror = "1.0.30"
 anyhow = "1.0.56"
 tokio = { version = "1.18.1", features = ["io-util", "sync", "rt", "macros"] }
 slog = "2.7.0"
+
+[features]
+uart = ["serialport", "corncobs", "hubpack"]
 
 [dev-dependencies]
 # Salty is used by the RoT for Ed25519 signatures
