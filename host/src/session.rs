@@ -27,6 +27,7 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
+use tokio::io::BufWriter;
 use std::error::Error;
 use std::io;
 use std::pin::Pin;
@@ -277,16 +278,21 @@ where
     Chan: AsyncRead + AsyncWrite + Unpin,
     E: Error,
 {
+    // We issue multiple write calls for length+payload, so wrap `channel` in a
+    // buffering writer to avoid sending multiple packets per message. We
+    // _cannot_ buffer reading, because we risk BufReader eagerly slurping
+    // application data that comes in after handshake data.
+    let mut channel = BufWriter::new(channel);
     let mut buf = HandshakeMsgVec::new();
     let (mut handshake, token) =
         ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
 
     // Send the ClientHello
-    send_length_prefixed(channel, &buf).await?;
+    send_length_prefixed(&mut channel, &buf).await?;
     channel.flush().await.map_err(SessionError::Write)?;
 
     // Receive the ServerHello
-    recv_length_prefixed(channel, &mut buf).await?;
+    recv_length_prefixed(&mut channel, &mut buf).await?;
 
     // Handle the ServerHello and retrieve the next action to take
     let mut action = handshake
@@ -308,7 +314,7 @@ where
                 // here and in `Complete` compared to always flushing in `Send`.
                 // This comment also applies to `server_handshake`.
                 channel.flush().await.map_err(SessionError::Write)?;
-                recv_length_prefixed(channel, &mut buf).await?;
+                recv_length_prefixed(&mut channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -317,7 +323,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_length_prefixed(channel, &buf).await?;
+                send_length_prefixed(&mut channel, &buf).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
@@ -346,12 +352,17 @@ where
     Chan: AsyncRead + AsyncWrite + Unpin,
     E: Error,
 {
+    // We issue multiple write calls for length+payload, so wrap `channel` in a
+    // buffering writer to avoid sending multiple packets per message. We
+    // _cannot_ buffer reading, because we risk BufReader eagerly slurping
+    // application data that comes in after handshake data.
+    let mut channel = BufWriter::new(channel);
     let (mut handshake, token) =
         ServerHandshake::init(manufacturing_public_key, rot_certs);
 
     // Receive the ClientHello
     let mut buf = HandshakeMsgVec::new();
-    recv_length_prefixed(channel, &mut buf).await?;
+    recv_length_prefixed(&mut channel, &mut buf).await?;
 
     // Handle the ClientHello and retrieve the next action to take
     let mut action = handshake
@@ -364,7 +375,7 @@ where
             UserAction::Recv(token) => {
                 // If we have buffered data to send, send it before receiving.
                 channel.flush().await.map_err(SessionError::Write)?;
-                recv_length_prefixed(channel, &mut buf).await?;
+                recv_length_prefixed(&mut channel, &mut buf).await?;
                 handshake
                     .handle(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?
@@ -373,7 +384,7 @@ where
                 let next_action = handshake
                     .create_next_msg(&mut buf, token)
                     .map_err(SessionError::SprocketsError)?;
-                send_length_prefixed(channel, &buf).await?;
+                send_length_prefixed(&mut channel, &buf).await?;
                 next_action
             }
             UserAction::SendToRot(op) => {
