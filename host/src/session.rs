@@ -39,7 +39,6 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
-use tokio::io::BufStream;
 
 use self::decrypting_buf_reader::DecryptingBufReader;
 use self::encrypting_buf_writer::EncryptingBufWriter;
@@ -92,13 +91,12 @@ where
     Chan: AsyncRead + AsyncWrite + Unpin,
 {
     pub async fn new_client<E: Error>(
-        channel: Chan,
+        mut channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
         rot: RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<E>> {
-        let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = client_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -112,7 +110,7 @@ where
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
-            channel: channel.into_inner(),
+            channel,
             remote_identity,
             session,
             writer: EncryptingBufWriter::with_capacity(BUFFER_SIZE),
@@ -121,13 +119,12 @@ where
     }
 
     pub async fn new_server<E: Error>(
-        channel: Chan,
+        mut channel: Chan,
         manufacturing_public_key: Ed25519PublicKey,
         rot: RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<E>> {
-        let mut channel = BufStream::new(channel);
         let (handshake, completion_token) = server_handshake(
             &mut channel,
             manufacturing_public_key,
@@ -141,7 +138,7 @@ where
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
-            channel: channel.into_inner(),
+            channel,
             remote_identity,
             session,
             writer: EncryptingBufWriter::with_capacity(BUFFER_SIZE),
@@ -189,9 +186,13 @@ impl<Chan: AsyncWrite> AsyncWrite for Session<Chan> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        let me = self.project();
-        me.writer
-            .poll_flush(me.channel, cx, encrypt_via_session(me.session))
+        let mut me = self.project();
+        ready!(me.writer.poll_flush(
+            me.channel.as_mut(),
+            cx,
+            encrypt_via_session(me.session)
+        ))?;
+        me.channel.poll_flush(cx)
     }
 
     fn poll_shutdown(
@@ -225,7 +226,7 @@ impl<Chan: AsyncRead> AsyncRead for Session<Chan> {
 
 // Helper function to send length-prefixed data during the handshake.
 async fn send_length_prefixed<Chan>(
-    channel: &mut BufStream<Chan>,
+    channel: &mut Chan,
     buf: &HandshakeMsgVec,
 ) -> Result<(), SessionError>
 where
@@ -241,7 +242,7 @@ where
 
 // Helper function to receive length-prefixed data during the handshake.
 async fn recv_length_prefixed<Chan>(
-    channel: &mut BufStream<Chan>,
+    channel: &mut Chan,
     buf: &mut HandshakeMsgVec,
 ) -> Result<(), SessionError>
 where
@@ -266,7 +267,7 @@ where
 }
 
 async fn client_handshake<Chan, E>(
-    channel: &mut BufStream<Chan>,
+    channel: &mut Chan,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
@@ -335,7 +336,7 @@ where
 }
 
 async fn server_handshake<Chan, E>(
-    channel: &mut BufStream<Chan>,
+    channel: &mut Chan,
     manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,

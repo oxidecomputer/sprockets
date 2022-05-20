@@ -5,6 +5,7 @@ members = [
     "host",
     "common",
     "session",
+    "proxy",
 ]
 
 default-members = [
@@ -12,7 +13,8 @@ default-members = [
     "rot",
     "host",
     "common",
-    "session"
+    "session",
+    "proxy",
 ]
 
 [profile.dev]
