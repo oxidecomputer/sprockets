@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 sprockets-common = { path = "../common" }
-corncobs = { tag = "v0.1.1", git = "https://github.com/cbiffle/corncobs" }
+corncobs = "0.1.1"
 hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
 tinyvec = { version = "1.5.1" }
 derive_more = "0.99.17"
