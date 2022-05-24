@@ -147,6 +147,7 @@ pub struct Ed25519Certificate {
 ///
 /// We could have just chosen 'ring' as our crypto provider, but that would
 /// require build time configuration in the common crate which we seek to avoid.
+#[allow(clippy::result_unit_err)] // we want information-free errors
 pub trait Ed25519Verifier {
     fn verify(
         &self,

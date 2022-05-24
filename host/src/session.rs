@@ -107,7 +107,7 @@ where
         )
         .await?;
 
-        let remote_identity = completion_token.remote_identity().clone();
+        let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
@@ -135,7 +135,7 @@ where
         )
         .await?;
 
-        let remote_identity = completion_token.remote_identity().clone();
+        let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
@@ -238,7 +238,7 @@ where
         .write_all(&len.to_be_bytes())
         .await
         .map_err(SessionError::Write)?;
-    channel.write_all(&buf).await.map_err(SessionError::Write)
+    channel.write_all(buf).await.map_err(SessionError::Write)
 }
 
 // Helper function to receive length-prefixed data during the handshake.

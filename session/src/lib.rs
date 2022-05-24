@@ -7,12 +7,16 @@
 
 use chacha20poly1305::aead::heapless;
 use derive_more::From;
-use ed25519;
-use ed25519_dalek;
-pub use hubpack::{deserialize, serialize, SerializedSize};
 use sprockets_common::certificates::Ed25519Verifier;
 use sprockets_common::msgs::RotOpV1;
 use sprockets_common::{Ed25519PublicKey, Ed25519Signature};
+
+pub use chacha20poly1305::aead::generic_array;
+pub use chacha20poly1305::aead::AeadCore;
+pub use chacha20poly1305::aead::Buffer;
+pub use chacha20poly1305::ChaCha20Poly1305;
+pub use chacha20poly1305::Tag;
+pub use hubpack::{deserialize, serialize, SerializedSize};
 
 mod client;
 mod error;
@@ -21,16 +25,11 @@ mod msgs;
 mod server;
 mod session;
 
-pub use chacha20poly1305::aead::generic_array;
-pub use chacha20poly1305::aead::AeadCore;
-pub use chacha20poly1305::aead::Buffer;
-pub use chacha20poly1305::ChaCha20Poly1305;
-pub use chacha20poly1305::Tag;
-pub use client::ClientHandshake;
-pub use error::Error;
-pub use msgs::Identity;
-pub use server::ServerHandshake;
-pub use session::Session;
+pub use self::client::ClientHandshake;
+pub use self::error::Error;
+pub use self::msgs::Identity;
+pub use self::server::ServerHandshake;
+pub use self::session::Session;
 
 use crate::msgs::HandshakeMsgV1;
 
@@ -127,6 +126,7 @@ impl CompletionToken {
 /// This is the return value from a Client operation. It instructs the user what
 /// to do next.
 #[derive(Debug, From)]
+#[allow(clippy::large_enum_variant)] // clippy suggests `Box`; we're no_std
 pub enum UserAction {
     /// The user should receive a message over the transport and then call
     /// `handle`.

@@ -86,6 +86,7 @@ impl HandshakeMsgV1 {
     Deserialize,
     SerializedSize,
 )]
+#[allow(clippy::large_enum_variant)] // clippy suggests `Box`; we're no_std
 pub enum HandshakeMsgDataV1 {
     ClientHello(ClientHello),
     ServerHello(ServerHello),

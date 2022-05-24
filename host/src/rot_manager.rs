@@ -176,7 +176,7 @@ impl<T: RotTransport> RotManager<T> {
 
         self.rot_transport
             .send(request, deadline)
-            .map_err(|e| RotManagerError::TransportError(e))?;
+            .map_err(RotManagerError::TransportError)?;
         self.recv_from_rot(deadline)
     }
 
@@ -194,7 +194,7 @@ impl<T: RotTransport> RotManager<T> {
             let response = self
                 .rot_transport
                 .recv(deadline)
-                .map_err(|e| RotManagerError::TransportError(e))?;
+                .map_err(RotManagerError::TransportError)?;
 
             if response.id == self.request_id {
                 return Ok(response.result);
