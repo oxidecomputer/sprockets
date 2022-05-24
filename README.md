@@ -1,4 +1,4 @@
-== Overview
+## Overview
 
 Sprockets provides a secure transport protocol for use in the Oxide bootstrap network. It is
 designed specifically to work with a Root of Trust (RoT) capable of providing device identities, signing
@@ -8,7 +8,7 @@ confidential, integrity protected channel is described in the [session
 README](https://github.com/oxidecomputer/sprockets/tree/main/session). This is a good place to start
 to understand the structure of this code base.
 
-== Navigating
+## Navigating
 
 *  `common` - no_std code that defines the messages to talk to the RoT as well as base types used in the rest of the
 code.
@@ -20,7 +20,7 @@ code for interacting with the RoT, as well as code for creating async sessions.
 the style of [hyper-tls](https://github.com/hyperium/hyper-tls).
 
 * `proxy` - A mechanism for tunneling TCP traffic through sprockets sessions.
-*
+
 * `rot` - no_std code intended to run on an RoT.
 
 * `session` - no_std code for creating a secure session.
