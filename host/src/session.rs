@@ -27,7 +27,6 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
-use tokio::io::BufWriter;
 use std::error::Error;
 use std::io;
 use std::pin::Pin;
@@ -40,6 +39,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufWriter;
 
 use self::decrypting_buf_reader::DecryptingBufReader;
 use self::encrypting_buf_writer::EncryptingBufWriter;

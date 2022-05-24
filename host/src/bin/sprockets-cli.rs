@@ -29,7 +29,7 @@ enum Op {
 }
 
 #[cfg(not(feature = "uart"))]
-fn main () -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     anyhow::bail!("sprockets-cli requires `uart` feature")
 }
 
