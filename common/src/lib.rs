@@ -87,6 +87,8 @@ pub struct Sha3_256Digest(pub [u8; 32]);
 )]
 pub struct Nonce(pub [u8; 32]);
 
+// `Nonce` isn't a container, so `is_empty()` doesn't make sense; inform clippy
+#[allow(clippy::len_without_is_empty)]
 impl Nonce {
     pub const SIZE: usize = 32;
 
@@ -100,6 +102,12 @@ impl Nonce {
 
     pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl Default for Nonce {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

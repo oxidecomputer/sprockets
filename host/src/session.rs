@@ -27,7 +27,6 @@ use sprockets_session::ServerHandshake;
 use sprockets_session::Session as RawSession;
 use sprockets_session::Tag;
 use sprockets_session::UserAction;
-use tokio::io::BufWriter;
 use std::error::Error;
 use std::io;
 use std::pin::Pin;
@@ -40,6 +39,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufWriter;
 
 use self::decrypting_buf_reader::DecryptingBufReader;
 use self::encrypting_buf_writer::EncryptingBufWriter;
@@ -107,7 +107,7 @@ where
         )
         .await?;
 
-        let remote_identity = completion_token.remote_identity().clone();
+        let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
@@ -135,7 +135,7 @@ where
         )
         .await?;
 
-        let remote_identity = completion_token.remote_identity().clone();
+        let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
 
         Ok(Self {
@@ -238,7 +238,7 @@ where
         .write_all(&len.to_be_bytes())
         .await
         .map_err(SessionError::Write)?;
-    channel.write_all(&buf).await.map_err(SessionError::Write)
+    channel.write_all(buf).await.map_err(SessionError::Write)
 }
 
 // Helper function to receive length-prefixed data during the handshake.

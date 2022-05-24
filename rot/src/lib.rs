@@ -85,7 +85,7 @@ impl RotSprocket {
         }
         let result = match op {
             RotOpV1::GetCertificates => {
-                RotResultV1::Certificates(self.certificates.clone())
+                RotResultV1::Certificates(self.certificates)
             }
             RotOpV1::AddHostMeasurements(measurements) => {
                 if self.measurements.host.is_some() {
@@ -105,7 +105,7 @@ impl RotSprocket {
                     self.measurements.serialize_with_nonce(&nonce, &mut buf)?;
                 let sig = self.measurement_keypair.sign(&buf[..size]);
                 let sig = Ed25519Signature(sig.to_bytes());
-                RotResultV1::Measurements(self.measurements.clone(), nonce, sig)
+                RotResultV1::Measurements(self.measurements, nonce, sig)
             }
             RotOpV1::SignTranscript(transcript_hash) => {
                 let sig = self.dhe_keypair.sign(&transcript_hash.0);
@@ -120,7 +120,7 @@ impl RotSprocket {
     }
 
     pub fn get_certificates(&self) -> Ed25519Certificates {
-        self.certificates.clone()
+        self.certificates
     }
 }
 

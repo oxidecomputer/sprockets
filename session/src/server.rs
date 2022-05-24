@@ -27,6 +27,7 @@ use sprockets_common::{Ed25519PublicKey, Measurements, Nonce, Sha3_256Digest};
 // Each state has different data associated with it.
 //
 // The states are transitioned in the order listed. No state is ever skipped.
+#[allow(clippy::large_enum_variant)] // clippy suggests `Box`; we're no_std
 enum State {
     WaitForHello,
     SendHello {
@@ -237,7 +238,7 @@ impl ServerHandshake {
         &mut self,
         buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
-        let (msg, _) = deserialize::<HandshakeMsgV1>(&buf)?;
+        let (msg, _) = deserialize::<HandshakeMsgV1>(buf)?;
         validate_version(&msg.version)?;
         if let HandshakeMsgDataV1::ClientHello(client_hello) = msg.data {
             // Add the serialized ClientHello to the transcript
@@ -262,7 +263,7 @@ impl ServerHandshake {
 
         let msg = HandshakeMsgV1::new(
             ServerHello {
-                nonce: server_nonce.clone(),
+                nonce: server_nonce,
                 public_key: Ed25519PublicKey(public_key.to_bytes()),
             }
             .into(),
@@ -286,7 +287,7 @@ impl ServerHandshake {
 
         // Transition to the next state
         self.state = Some(State::WaitForSignedMeasurementsFromRoT {
-            client_nonce: client_nonce.clone(),
+            client_nonce,
             server_nonce,
             handshake_state,
         });
@@ -331,7 +332,7 @@ impl ServerHandshake {
         let msg = HandshakeMsgV1 {
             version: HandshakeVersion { version: 1 },
             data: HandshakeMsgDataV1::Identity(Identity {
-                certs: self.server_certs.clone(),
+                certs: self.server_certs,
                 measurements,
                 measurements_sig,
             }),
