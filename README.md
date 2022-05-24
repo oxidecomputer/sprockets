@@ -10,7 +10,7 @@ to understand the structure of this code base.
 
 == Navigating
 
-*  `common` - Defines the messages to talk to the RoT as well as base types used in the rest of the
+*  `common` - no_std code that defines the messages to talk to the RoT as well as base types used in the rest of the
 code.
 
 * `host` - Code that runs on the host operating system - a rack sled in Oxide's case. This includes
@@ -19,8 +19,8 @@ code for interacting with the RoT, as well as code for creating async sessions.
 * `hyper-sprockets` - Functionality allowing hyper to use a sprockets async session as transport in
 the style of [hyper-tls](https://github.com/hyperium/hyper-tls).
 
-* `proxy` - A mechanism for proxying localhost TCP traffic over an existing sprockets session.
-
+* `proxy` - A mechanism for tunneling TCP traffic through sprockets sessions.
+*
 * `rot` - no_std code intended to run on an RoT.
 
 * `session` - no_std code for creating a secure session.
