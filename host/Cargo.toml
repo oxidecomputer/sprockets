@@ -33,3 +33,4 @@ tokio = { version = "1.18.1", features = ["io-util", "sync", "rt", "macros", "ti
 
 [[bin]]
 name = "sprockets-cli"
+

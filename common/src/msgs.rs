@@ -113,6 +113,7 @@ pub enum RotError {
     BadEncoding,
     UnsupportedVersion,
     InvalidOperation,
+    SpiError,
     GetCertificates(GetCertificatesError),
     AddHostMeasurements(AddHostMeasurementsError),
     GetMeasurements(GetMeasurementsError),
