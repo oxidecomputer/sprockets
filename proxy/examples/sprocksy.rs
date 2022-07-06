@@ -11,7 +11,6 @@ use slog::Logger;
 use sprockets_common::msgs::RotResponseV1;
 use sprockets_common::random_buf;
 use sprockets_host::Ed25519Certificates;
-use sprockets_host::Ed25519PublicKey;
 use sprockets_host::RotManager;
 use sprockets_host::RotManagerHandle;
 use sprockets_host::RotTransport;
@@ -71,7 +70,6 @@ async fn main() {
             target_address: args.target_address,
             role: args.role.into(),
         },
-        rot.manufacturing_public_key,
         rot.handle,
         rot.certs,
         Duration::ZERO,
@@ -96,7 +94,6 @@ async fn main() {
 const MANUFACTURING_SEED: [u8; 32] = *b"sprocksy-demo-manufacturing-seed";
 
 struct SimulatedRot {
-    manufacturing_public_key: Ed25519PublicKey,
     certs: Ed25519Certificates,
     handle: RotManagerHandle<TransportError>,
 }
@@ -115,13 +112,7 @@ impl SimulatedRot {
         let (manager, handle) = RotManager::new(1, transport, log);
         thread::spawn(move || manager.run());
 
-        Self {
-            manufacturing_public_key: Ed25519PublicKey(
-                manufacturing_keypair.public.to_bytes(),
-            ),
-            certs,
-            handle,
-        }
+        Self { certs, handle }
     }
 }
 

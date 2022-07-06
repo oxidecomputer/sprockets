@@ -8,7 +8,6 @@ use slog::debug;
 use slog::error;
 use slog::Logger;
 use sprockets_host::Ed25519Certificates;
-use sprockets_host::Ed25519PublicKey;
 use sprockets_host::RotManagerHandle;
 use sprockets_host::Session;
 use std::error::Error as StdError;
@@ -51,7 +50,6 @@ pub struct Proxy<E: StdError> {
 struct Inner<E: StdError> {
     target_address: SocketAddr,
     role: Role,
-    manufacturing_public_key: Ed25519PublicKey,
     rot: RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
     rot_timeout: Duration,
@@ -61,7 +59,6 @@ struct Inner<E: StdError> {
 impl<E: StdError + Send + 'static> Proxy<E> {
     pub async fn new(
         config: &Config,
-        manufacturing_public_key: Ed25519PublicKey,
         rot: RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
@@ -86,7 +83,6 @@ impl<E: StdError + Send + 'static> Proxy<E> {
         let inner = Inner {
             target_address: config.target_address,
             role: config.role,
-            manufacturing_public_key,
             rot,
             rot_certs,
             rot_timeout,
@@ -186,7 +182,6 @@ impl<E: StdError + Send + 'static> Inner<E> {
             Role::Client => {
                 let session = Session::new_client(
                     target_stream,
-                    self.manufacturing_public_key,
                     self.rot.clone(),
                     self.rot_certs,
                     self.rot_timeout,
@@ -198,7 +193,6 @@ impl<E: StdError + Send + 'static> Inner<E> {
             Role::Server => {
                 let session = Session::new_server(
                     proxy_client,
-                    self.manufacturing_public_key,
                     self.rot.clone(),
                     self.rot_certs,
                     self.rot_timeout,
@@ -228,7 +222,6 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     struct Harness {
-        manufacturing_public_key: Ed25519PublicKey,
         client_rot: RotManagerHandle<TestTransportError>,
         client_rot_certs: Ed25519Certificates,
         server_rot: RotManagerHandle<TestTransportError>,
@@ -286,8 +279,6 @@ mod tests {
     impl Harness {
         async fn bootstrap() -> Self {
             let manufacturing_keypair = salty::Keypair::from(&random_buf());
-            let manufacturing_public_key =
-                Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
 
             let client_rot = TestTransport::from_manufacturing_keypair(
                 &manufacturing_keypair,
@@ -310,7 +301,6 @@ mod tests {
             thread::spawn(move || server_mgr.run());
 
             Self {
-                manufacturing_public_key,
                 client_rot: client_handle,
                 client_rot_certs: client_certs,
                 server_rot: server_handle,
@@ -335,7 +325,6 @@ mod tests {
                 target_address: server_addr,
                 role: Role::Server,
             },
-            harness.manufacturing_public_key,
             harness.server_rot.clone(),
             harness.server_rot_certs,
             Duration::ZERO,
@@ -350,7 +339,6 @@ mod tests {
                 target_address: proxy_server.local_addr(),
                 role: Role::Client,
             },
-            harness.manufacturing_public_key,
             harness.client_rot.clone(),
             harness.client_rot_certs,
             Duration::ZERO,

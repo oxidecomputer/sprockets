@@ -13,6 +13,8 @@ use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
 use std::time::Duration;
 use thiserror::Error;
 
+pub use serialport::Error as SerialPortError;
+
 pub struct Uart {
     inner: Box<dyn SerialPort>,
 }
@@ -22,7 +24,7 @@ pub enum AttachError {
     #[error("uart doesn't exist at specified path")]
     DoesNotExist,
     #[error("serial port clear error: {0}")]
-    SerialPort(#[from] serialport::Error),
+    SerialPort(#[from] SerialPortError),
 }
 
 #[derive(Error, Debug)]
@@ -40,7 +42,7 @@ pub enum RecvError {
     #[error("serial port read error: {0}")]
     SerialPortIoError(#[from] std::io::Error),
     #[error("serial port attach error: {0}")]
-    SerialPortAttachError(#[from] serialport::Error),
+    SerialPortAttachError(#[from] SerialPortError),
 
     #[error("message exceeds maximum COBS encoded size")]
     MsgTooLarge,
@@ -49,7 +51,7 @@ pub enum RecvError {
 }
 
 impl Uart {
-    // Attach to a uart device
+    /// Attach to a uart device
     pub fn attach(
         device_path: &str,
         baud_rate: u32,
@@ -61,8 +63,16 @@ impl Uart {
         Ok(Uart { inner })
     }
 
-    // Send an RotRequest over the UART, where it will be proxied by the SP and
-    // eventually reach the RoT.
+    /// Set the timeout on the underlying serialport connection.
+    pub fn set_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(), SerialPortError> {
+        self.inner.set_timeout(timeout)
+    }
+
+    /// Send an RotRequest over the UART, where it will be proxied by the SP and
+    /// eventually reach the RoT.
     pub fn send(&mut self, req: RotRequestV1) -> Result<(), SendError> {
         let mut req_buf = [0u8; RotRequestV1::MAX_SIZE];
         let size = serialize(&mut req_buf, &req)?;
@@ -73,7 +83,7 @@ impl Uart {
         Ok(())
     }
 
-    // Receive a response to the prior request.
+    /// Receive a response to the prior request.
     pub fn recv(&mut self) -> Result<RotResponseV1, RecvError> {
         let mut encoded_rsp_buf =
             [0xFFu8; corncobs::max_encoded_len(RotResponseV1::MAX_SIZE)];

@@ -6,7 +6,6 @@ use futures::future::BoxFuture;
 use hyper::client::connect::Connection;
 use hyper::service::Service;
 use hyper::Uri;
-use sprockets_common::Ed25519PublicKey;
 use sprockets_host::Ed25519Certificates;
 use sprockets_host::RotManagerHandle;
 use sprockets_host::Session;
@@ -75,7 +74,6 @@ pub enum ConnectorError<C: Error, S: Error> {
 
 pub struct SprocketsConnector<T, E: Error> {
     connector: T,
-    manufacturing_public_key: Ed25519PublicKey,
     rot_certs: Ed25519Certificates,
     rot_handle: RotManagerHandle<E>,
     rot_timeout: Duration,
@@ -87,7 +85,6 @@ impl<T: Clone, E: Error> Clone for SprocketsConnector<T, E> {
     fn clone(&self) -> Self {
         Self {
             connector: self.connector.clone(),
-            manufacturing_public_key: self.manufacturing_public_key,
             rot_certs: self.rot_certs,
             rot_handle: self.rot_handle.clone(),
             rot_timeout: self.rot_timeout,
@@ -98,14 +95,12 @@ impl<T: Clone, E: Error> Clone for SprocketsConnector<T, E> {
 impl<T, E: Error> SprocketsConnector<T, E> {
     pub fn new(
         connector: T,
-        manufacturing_public_key: Ed25519PublicKey,
         rot_certs: Ed25519Certificates,
         rot_handle: RotManagerHandle<E>,
         rot_timeout: Duration,
     ) -> Self {
         Self {
             connector,
-            manufacturing_public_key,
             rot_certs,
             rot_handle,
             rot_timeout,
@@ -140,7 +135,6 @@ where
 
     fn call(&mut self, req: Uri) -> Self::Future {
         let connecting = self.connector.call(req);
-        let manufacturing_public_key = self.manufacturing_public_key;
         let rot_handle = self.rot_handle.clone();
         let rot_certs = self.rot_certs;
         let rot_timeout = self.rot_timeout;
@@ -150,7 +144,6 @@ where
                 connecting.await.map_err(ConnectorError::ConnectionError)?;
             let session = Session::new_client(
                 inner,
-                manufacturing_public_key,
                 rot_handle.clone(),
                 rot_certs,
                 rot_timeout,

@@ -49,7 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ... wrapped in an adaptor that secures connections via sprockets.
     let acceptor = SprocketsAcceptor::new(
         acceptor,
-        rot.manufacturing_public_key,
         rot.certs,
         rot.handle,
         Duration::from_secs(1), // simulated RoT never times out

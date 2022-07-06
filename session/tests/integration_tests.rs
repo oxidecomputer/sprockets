@@ -10,7 +10,7 @@ use salty;
 
 use sprockets_common::certificates::{Ed25519Certificates, SerialNumber};
 use sprockets_common::msgs::{RotRequestV1, RotResponseV1};
-use sprockets_common::{random_buf, Ed25519PublicKey};
+use sprockets_common::random_buf;
 use sprockets_rot::{RotConfig, RotSprocket};
 use sprockets_session::{
     ClientHandshake, HandshakeMsgVec, RecvToken, ServerHandshake, UserAction,
@@ -26,8 +26,6 @@ fn bootstrap() -> (
 ) {
     // All certs should trace back to the same manufacturing key
     let manufacturing_keypair = salty::Keypair::from(&random_buf());
-    let manufacturing_public_key =
-        Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
     let client_rot = RotSprocket::new(RotConfig::bootstrap_for_testing(
         &manufacturing_keypair,
         salty::Keypair::from(&random_buf()),
@@ -45,7 +43,6 @@ fn bootstrap() -> (
 
     let mut client_hello_buf = HandshakeMsgVec::new();
     let (client_hs, client_recv_token) = ClientHandshake::init(
-        manufacturing_public_key.clone(),
         client_rot.get_certificates(),
         &mut client_hello_buf,
     );
@@ -58,10 +55,8 @@ fn bootstrap() -> (
         hs: Some(client_hs),
     };
 
-    let (server_hs, server_recv_token) = ServerHandshake::init(
-        manufacturing_public_key,
-        server_rot.get_certificates(),
-    );
+    let (server_hs, server_recv_token) =
+        ServerHandshake::init(server_rot.get_certificates());
     let server = ChannelServer {
         rot: server_rot,
         tx: server_tx,

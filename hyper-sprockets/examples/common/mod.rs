@@ -6,7 +6,6 @@ use slog::Logger;
 use sprockets_common::msgs::RotResponseV1;
 use sprockets_common::random_buf;
 use sprockets_host::Ed25519Certificates;
-use sprockets_host::Ed25519PublicKey;
 use sprockets_host::RotManager;
 use sprockets_host::RotManagerHandle;
 use sprockets_host::RotTransport;
@@ -21,7 +20,6 @@ use thiserror::Error;
 const MANUFACTURING_SEED: [u8; 32] = *b"-sprockets-manufacturing-shared-";
 
 pub(super) struct SimulatedRot {
-    pub(super) manufacturing_public_key: Ed25519PublicKey,
     pub(super) certs: Ed25519Certificates,
     pub(super) handle: RotManagerHandle<TransportError>,
 }
@@ -40,13 +38,7 @@ impl SimulatedRot {
         let (manager, handle) = RotManager::new(1, transport, log);
         thread::spawn(move || manager.run());
 
-        Self {
-            manufacturing_public_key: Ed25519PublicKey(
-                manufacturing_keypair.public.to_bytes(),
-            ),
-            certs,
-            handle,
-        }
+        Self { certs, handle }
     }
 }
 

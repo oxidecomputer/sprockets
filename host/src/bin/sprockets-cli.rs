@@ -36,7 +36,8 @@ fn main() -> anyhow::Result<()> {
 #[cfg(feature = "uart")]
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let mut uart = sprockets_host::Uart::attach(&args.path, args.baud_rate)?;
+    let mut uart =
+        sprockets_host::uart::Uart::attach(&args.path, args.baud_rate)?;
 
     let op = match args.op {
         Op::GetCertificates => RotOpV1::GetCertificates,

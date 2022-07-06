@@ -73,7 +73,6 @@ enum State {
 
 /// The client side of a secure session handshake
 pub struct ClientHandshake {
-    manufacturing_public_key: Ed25519PublicKey,
     client_certs: Ed25519Certificates,
     transcript: Sha3_256,
     // We don't know the server identity when we're created, but once we get it
@@ -90,7 +89,6 @@ impl ClientHandshake {
     ///
     /// Return the ClientHandshake along with a RecvToken.
     pub fn init(
-        manufacturing_public_key: Ed25519PublicKey,
         client_certs: Ed25519Certificates,
         buf: &mut HandshakeMsgVec,
     ) -> (ClientHandshake, RecvToken) {
@@ -118,7 +116,6 @@ impl ClientHandshake {
         transcript.update(&buf);
 
         let client = ClientHandshake {
-            manufacturing_public_key,
             client_certs,
             transcript,
             server_identity: None,
@@ -431,9 +428,10 @@ impl ClientHandshake {
             self.transcript.update(buf);
 
             // Validate the certificate chains
-            identity
-                .certs
-                .validate(&self.manufacturing_public_key, &DalekVerifier)?;
+            identity.certs.validate(
+                &self.client_certs.manufacturing_public_key,
+                &DalekVerifier,
+            )?;
 
             // Ensure measurements concatenated with the client nonce are
             // properly signed.
