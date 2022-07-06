@@ -35,6 +35,9 @@ pub struct Ed25519Certificates {
     // should also probably sign it.
     pub serial_number: SerialNumber,
 
+    /// The public portion of the Manufacturing key
+    pub manufacturing_public_key: Ed25519PublicKey,
+
     /// The certificate by the Manufacturing key for the DeviceId key
     pub device_id: Ed25519Certificate,
 
@@ -92,6 +95,9 @@ impl Ed25519Certificates {
 
         Ed25519Certificates {
             serial_number,
+            manufacturing_public_key: Ed25519PublicKey(
+                manufacturing_keypair.public.to_bytes(),
+            ),
             device_id,
             measurement,
             dhe,

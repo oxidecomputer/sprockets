@@ -15,7 +15,6 @@ use futures::ready;
 use pin_project::pin_project;
 use sprockets_common::certificates::Ed25519Certificates;
 use sprockets_common::msgs::RotError;
-use sprockets_common::Ed25519PublicKey;
 use sprockets_session::generic_array::typenum::Unsigned;
 use sprockets_session::AeadCore;
 use sprockets_session::ChaCha20Poly1305;
@@ -93,19 +92,13 @@ where
 {
     pub async fn new_client<E: Error>(
         mut channel: Chan,
-        manufacturing_public_key: Ed25519PublicKey,
         rot: RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<E>> {
-        let (handshake, completion_token) = client_handshake(
-            &mut channel,
-            manufacturing_public_key,
-            &rot,
-            rot_certs,
-            rot_timeout,
-        )
-        .await?;
+        let (handshake, completion_token) =
+            client_handshake(&mut channel, &rot, rot_certs, rot_timeout)
+                .await?;
 
         let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
@@ -121,19 +114,13 @@ where
 
     pub async fn new_server<E: Error>(
         mut channel: Chan,
-        manufacturing_public_key: Ed25519PublicKey,
         rot: RotManagerHandle<E>,
         rot_certs: Ed25519Certificates,
         rot_timeout: Duration,
     ) -> Result<Self, SessionHandshakeError<E>> {
-        let (handshake, completion_token) = server_handshake(
-            &mut channel,
-            manufacturing_public_key,
-            &rot,
-            rot_certs,
-            rot_timeout,
-        )
-        .await?;
+        let (handshake, completion_token) =
+            server_handshake(&mut channel, &rot, rot_certs, rot_timeout)
+                .await?;
 
         let remote_identity = *completion_token.remote_identity();
         let session = handshake.new_session(completion_token);
@@ -269,7 +256,6 @@ where
 
 async fn client_handshake<Chan, E>(
     channel: &mut Chan,
-    manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
     rot_timeout: Duration,
@@ -284,8 +270,7 @@ where
     // application data that comes in after handshake data.
     let mut channel = BufWriter::new(channel);
     let mut buf = HandshakeMsgVec::new();
-    let (mut handshake, token) =
-        ClientHandshake::init(manufacturing_public_key, rot_certs, &mut buf);
+    let (mut handshake, token) = ClientHandshake::init(rot_certs, &mut buf);
 
     // Send the ClientHello
     send_length_prefixed(&mut channel, &buf).await?;
@@ -343,7 +328,6 @@ where
 
 async fn server_handshake<Chan, E>(
     channel: &mut Chan,
-    manufacturing_public_key: Ed25519PublicKey,
     rot: &RotManagerHandle<E>,
     rot_certs: Ed25519Certificates,
     rot_timeout: Duration,
@@ -357,8 +341,7 @@ where
     // _cannot_ buffer reading, because we risk BufReader eagerly slurping
     // application data that comes in after handshake data.
     let mut channel = BufWriter::new(channel);
-    let (mut handshake, token) =
-        ServerHandshake::init(manufacturing_public_key, rot_certs);
+    let (mut handshake, token) = ServerHandshake::init(rot_certs);
 
     // Receive the ClientHello
     let mut buf = HandshakeMsgVec::new();
@@ -415,8 +398,6 @@ mod tests {
 
     async fn bootstrap() -> (Session<DuplexStream>, Session<DuplexStream>) {
         let manufacturing_keypair = salty::Keypair::from(&random_buf());
-        let manufacturing_public_key =
-            Ed25519PublicKey(manufacturing_keypair.public.to_bytes());
 
         let client_rot =
             TestTransport::from_manufacturing_keypair(&manufacturing_keypair);
@@ -440,14 +421,12 @@ mod tests {
 
         let client_fut = Session::new_client(
             client_stream,
-            manufacturing_public_key,
             client_handle.clone(),
             client_certs,
             Duration::from_secs(10),
         );
         let server_fut = Session::new_server(
             server_stream,
-            manufacturing_public_key,
             server_handle.clone(),
             server_certs,
             Duration::from_secs(10),

@@ -5,7 +5,6 @@
 use futures::future::BoxFuture;
 use futures::ready;
 use hyper::server::accept::Accept;
-use sprockets_common::Ed25519PublicKey;
 use sprockets_host::Ed25519Certificates;
 use sprockets_host::RotManagerHandle;
 use sprockets_host::Session;
@@ -121,7 +120,6 @@ where
 
 pub struct SprocketsAcceptor<T, E: Error> {
     listener: T,
-    manufacturing_public_key: Ed25519PublicKey,
     rot_certs: Ed25519Certificates,
     rot_handle: RotManagerHandle<E>,
     rot_timeout: Duration,
@@ -130,14 +128,12 @@ pub struct SprocketsAcceptor<T, E: Error> {
 impl<T, E: Error> SprocketsAcceptor<T, E> {
     pub fn new(
         listener: T,
-        manufacturing_public_key: Ed25519PublicKey,
         rot_certs: Ed25519Certificates,
         rot_handle: RotManagerHandle<E>,
         rot_timeout: Duration,
     ) -> Self {
         Self {
             listener,
-            manufacturing_public_key,
             rot_certs,
             rot_handle,
             rot_timeout,
@@ -163,7 +159,6 @@ where
             Some(Ok(conn)) => {
                 let session = Session::new_server(
                     conn,
-                    me.manufacturing_public_key,
                     me.rot_handle.clone(),
                     me.rot_certs,
                     me.rot_timeout,

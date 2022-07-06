@@ -33,7 +33,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Wrap a hyper HttpConnector in our sprockets adaptor.
     let connector = SprocketsConnector::new(
         HttpConnector::new(),
-        rot.manufacturing_public_key,
         rot.certs,
         rot.handle,
         Duration::from_secs(1), // simulated RoT never times out
