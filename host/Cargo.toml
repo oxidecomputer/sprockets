@@ -13,7 +13,7 @@ hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://git
 derive_more = "0.99.17"
 serde = { version = "1.0.136", features = ["derive"]  }
 serialport = { git = "https://github.com/jgallagher/serialport-rs", branch = "illumos-support", optional = true }
-clap = { version = "3.1", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"] }
 corncobs = { version = "0.1.1", features = ["std"], optional = true }
 thiserror = "1.0.30"
 anyhow = "1.0.56"
