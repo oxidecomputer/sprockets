@@ -28,5 +28,5 @@ hmac = "0.12.1"
 
 [dev-dependencies]
 # Salty is used by the RoT for Ed25519 signatures
-salty = { version = "0.2.0" }
+salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
 sprockets-rot = { path = "../rot" }

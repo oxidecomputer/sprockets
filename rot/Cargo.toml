@@ -10,7 +10,7 @@ hubpack = "0.1"
 tinyvec = { version = "1.5.1" }
 derive_more = "0.99.17"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
-salty = { version = "0.2.0" }
+salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
 rand = { version = "0.8.5", optional = true }
 
 [features]
