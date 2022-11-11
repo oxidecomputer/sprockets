@@ -27,6 +27,7 @@ pub struct SprocketsStream<T, E: Error> {
     state: State<T, E>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum State<T, E: Error> {
     Handshaking(SessionFut<'static, T, E>),
     Streaming(Session<T>),

@@ -32,7 +32,7 @@ pub trait RotTransport {
 }
 
 // An error resulting from communcation with the RotManager
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum RotManagerError<T: Error> {
     #[error("send to RotManager failed. Is the RotManager running?")]
     SendFailed(RotOpV1),
