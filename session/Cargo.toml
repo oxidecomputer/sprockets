@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 sprockets-common = { path = "../common", features = ["rand"] }
 derive_more = "0.99.17"
-hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
+hubpack = "0.1"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
 
 # x25519-dalek requires 0.5.1. 0.6.X versions are incompatible.

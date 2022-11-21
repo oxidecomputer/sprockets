@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 derive_more = "0.99.17"
-hubpack = { rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25", git = "https://github.com/cbiffle/hubpack.git"}
+hubpack = "0.1"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
 serde-big-array = { version = "0.4.1" }
 rand = { version = "0.8.5", optional = true }
