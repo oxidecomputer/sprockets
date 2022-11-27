@@ -4,7 +4,7 @@
 
 //! The state needed for handshake encyption by both client and server
 
-use chacha20poly1305::aead::{AeadInPlace, NewAead};
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
@@ -212,7 +212,8 @@ impl HandshakeState {
             Role::Client => self.server_finished_key.as_ref(),
             Role::Server => self.client_finished_key.as_ref(),
         };
-        let mut mac = Hmac::<Sha3_256>::new_from_slice(finished_key).unwrap();
+        let mut mac =
+            <Hmac<Sha3_256> as Mac>::new_from_slice(finished_key).unwrap();
         mac.update(transcript_hash);
         mac.verify_slice(finished_mac).map_err(|_| Error::BadMac)
     }
@@ -224,7 +225,8 @@ impl HandshakeState {
             Role::Client => self.client_finished_key.as_ref(),
             Role::Server => self.server_finished_key.as_ref(),
         };
-        let mut mac = Hmac::<Sha3_256>::new_from_slice(finished_key).unwrap();
+        let mut mac =
+            <Hmac<Sha3_256> as Mac>::new_from_slice(finished_key).unwrap();
         mac.update(transcript_hash);
         HmacSha3_256(mac.finalize().into_bytes().into())
     }

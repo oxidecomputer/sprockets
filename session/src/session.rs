@@ -4,7 +4,7 @@
 
 //! Secure Session type
 
-use chacha20poly1305::aead::{AeadInPlace, Buffer, NewAead};
+use chacha20poly1305::aead::{AeadInPlace, Buffer, KeyInit};
 use chacha20poly1305::{self, ChaCha20Poly1305, Key, Tag};
 use hkdf::Hkdf;
 use sha3::Sha3_256;
