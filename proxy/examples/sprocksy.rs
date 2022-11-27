@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use clap::ArgEnum;
 use clap::Parser;
+use clap::ValueEnum;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -31,11 +31,11 @@ struct Args {
     bind_address: SocketAddr,
     #[clap(long)]
     target_address: SocketAddr,
-    #[clap(long, arg_enum)]
+    #[clap(long, value_enum)]
     role: Role,
 }
 
-#[derive(Debug, Copy, Clone, ArgEnum)]
+#[derive(Debug, Copy, Clone, ValueEnum)]
 enum Role {
     Client,
     Server,
