@@ -12,7 +12,7 @@ rand = { version = "0.8.5", optional = true }
 salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize", optional = true }
 
 [dev-dependencies]
-ed25519 = { version = "1.4.1" }
+ed25519 = { version = "2.0.0" }
 ed25519-dalek = { version = "1.0.1", features = ["u64_backend"]}
 salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
 rand = "0.8.5"
