@@ -7,7 +7,7 @@ edition = "2021"
 derive_more = "0.99.17"
 hubpack = "0.1"
 serde = { version = "1.0.136", default-features = false, features = ["derive"]  }
-serde-big-array = { version = "0.4.1" }
+serde-big-array = { version = "0.5.0" }
 rand = { version = "0.8.5", optional = true }
 salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize", optional = true }
 
