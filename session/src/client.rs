@@ -92,7 +92,7 @@ impl ClientHandshake {
         client_certs: Ed25519Certificates,
         buf: &mut HandshakeMsgVec,
     ) -> (ClientHandshake, RecvToken) {
-        let secret = EphemeralSecret::new(OsRng);
+        let secret = EphemeralSecret::random_from_rng(OsRng);
         let public_key = PublicKey::from(&secret);
 
         let client_nonce = Nonce::new();

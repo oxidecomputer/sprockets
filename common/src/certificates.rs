@@ -4,7 +4,6 @@
 
 use derive_more::From;
 use hubpack::SerializedSize;
-use salty;
 use serde::{Deserialize, Serialize};
 
 pub use crate::{Ed25519PublicKey, Ed25519Signature};
@@ -48,6 +47,7 @@ pub struct Ed25519Certificates {
     pub dhe: Ed25519Certificate,
 }
 
+#[cfg(feature = "salty")]
 impl Ed25519Certificates {
     // TODO: We eventually must get rid of this as we will not have access to
     // the manufacturing secret key.
@@ -287,6 +287,7 @@ pub enum KeyType {
     Dhe,
 }
 
+#[cfg(feature = "salty")]
 #[cfg(test)]
 mod tests {
 
