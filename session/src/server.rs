@@ -254,7 +254,7 @@ impl ServerHandshake {
         client_hello: ClientHello,
         buf: &mut HandshakeMsgVec,
     ) -> Result<UserAction, Error> {
-        let secret = EphemeralSecret::new(OsRng);
+        let secret = EphemeralSecret::random_from_rng(OsRng);
         let public_key = PublicKey::from(&secret);
         let server_nonce = Nonce::new();
 
