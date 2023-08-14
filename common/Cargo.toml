@@ -13,7 +13,7 @@ salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroi
 
 [dev-dependencies]
 ed25519 = { version = "1.5.2" }
-ed25519-dalek = { version = "1.0.1", features = ["u64_backend"]}
+ed25519-dalek = { version = "2.0.0", features = ["u64_backend"]}
 salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
 rand = "0.8.5"
 
