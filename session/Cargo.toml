@@ -18,7 +18,7 @@ serde = { version = "1.0.136", default-features = false, features = ["derive"]  
 #
 rand_core = { version = "0.6.3", features = ["getrandom"] }
 ed25519 = { version = "1.4.1" }
-ed25519-dalek = { version = "1.0.1", features = ["u64_backend"]}
+ed25519-dalek = { version = "2.0.0", features = ["u64_backend"]}
 x25519-dalek = { version = "2.0.0-rc.2" }
 sha3 = "0.10.1"
 chacha20poly1305 = { version = "0.10", features = ["heapless"] }
