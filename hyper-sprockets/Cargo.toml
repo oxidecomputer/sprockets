@@ -19,7 +19,7 @@ client = ["hyper/client"]
 
 [dev-dependencies]
 hyper = { version = "0.14", features = ["full"] }
-salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
+salty.workspace = true
 slog = "2.7.0"
 slog-term = "2.9.0"
 slog-async = "2.7.0"

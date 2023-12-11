@@ -10,7 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
+salty.workspace = true
 slog = "2.7.0"
 slog-async = "2.7.0"
 slog-term = "2.9.0"

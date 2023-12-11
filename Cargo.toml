@@ -23,3 +23,5 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 
+[workspace.dependencies]
+salty.version = "0.3"
