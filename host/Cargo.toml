@@ -25,7 +25,7 @@ uart = ["serialport", "corncobs", "hubpack"]
 
 [dev-dependencies]
 # Salty is used by the RoT for Ed25519 signatures
-salty = { git = "https://github.com/oxidecomputer/salty", branch = "v0.2.0-zeroize" }
+salty.workspace = true
 sprockets-rot = { path = "../rot" }
 slog-term = "2.9.0"
 slog-async = "2.7.0"
