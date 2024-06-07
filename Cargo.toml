@@ -1,14 +1,16 @@
 [workspace]
 members = [
+    "tls",
     "hyper-sprockets",
     "rot",
     "host",
     "common",
     "session",
-    "proxy",
+    "proxy", "tls",
 ]
 
 default-members = [
+    "tls",
     "hyper-sprockets",
     "rot",
     "host",
