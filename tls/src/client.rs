@@ -4,15 +4,65 @@
 
 //! A TLS based client
 
+use anyhow::Result;
+use camino::Utf8PathBuf;
+use dice_verifier::PkiPathSignatureVerifier;
 use rustls::{
-    client::danger::{HandshakeSignatureValid, ServerCertVerifier},
+    client::{
+        danger::{HandshakeSignatureValid, ServerCertVerifier},
+        ResolvesClientCert,
+    },
+    sign::CertifiedKey,
     ClientConfig, SignatureScheme,
 };
 use std::sync::Arc;
+use x509_cert::{der::Encode, Certificate, PkiPath};
+
+/// A resolver for certs that gets them from the local filesystem
+///
+/// In production we'll retrieve these over IPCC from the RoT
+#[derive(Debug)]
+pub struct LocalCertResolver {
+    path: Utf8PathBuf,
+}
+
+impl LocalCertResolver {
+    pub fn new(path: Utf8PathBuf) -> LocalCertResolver {
+        LocalCertResolver { path }
+    }
+}
+
+impl ResolvesClientCert for LocalCertResolver {
+    fn resolve(
+        &self,
+        root_hint_subjects: &[&[u8]],
+        sigschemes: &[SignatureScheme],
+    ) -> Option<Arc<CertifiedKey>> {
+        todo!()
+    }
+
+    fn has_certs(&self) -> bool {
+        true
+    }
+}
+
+/// An implementation of a an Ed25519 private signing key that lives in memory
+///
+/// In production we'll send signing requests to the RoT via IPCC and sprot.
+pub struct LocalEd25519SigningKey {}
 
 /// A verifier for certs generated on the RoT
 #[derive(Debug)]
-struct RotServerCertVerifier {}
+struct RotServerCertVerifier {
+    verifier: PkiPathSignatureVerifier,
+}
+
+impl RotServerCertVerifier {
+    pub fn new(root: Certificate) -> Result<Self> {
+        let verifier = PkiPathSignatureVerifier::new(Some(root))?;
+        Ok(RotServerCertVerifier { verifier })
+    }
+}
 
 impl ServerCertVerifier for RotServerCertVerifier {
     fn verify_server_cert(
@@ -56,13 +106,16 @@ impl ServerCertVerifier for RotServerCertVerifier {
 pub struct Client {}
 
 impl Client {
-    pub fn new() -> Client {
-        let verifier =
-            Arc::new(RotServerCertVerifier {}) as Arc<dyn ServerCertVerifier>;
+    pub fn new(
+        root: Certificate,
+        resolver: Arc<dyn ResolvesClientCert>,
+    ) -> anyhow::Result<Client> {
+        let verifier = Arc::new(RotServerCertVerifier::new(root)?)
+            as Arc<dyn ServerCertVerifier>;
         let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(verifier)
-            .with_no_client_auth();
+            .with_client_cert_resolver(resolver);
 
         todo!()
     }
