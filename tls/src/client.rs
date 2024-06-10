@@ -8,6 +8,7 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
 use pem_rfc7468;
+use rustls::version::TLS13;
 use rustls::{
     client::{
         danger::{HandshakeSignatureValid, ServerCertVerifier},
@@ -238,10 +239,13 @@ impl Client {
         let verifier = Arc::new(RotServerCertVerifier::new(root)?)
             as Arc<dyn ServerCertVerifier>;
 
-        let config = ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(verifier)
-            .with_client_cert_resolver(resolver);
+        let config = ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&TLS13])?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_client_cert_resolver(resolver);
 
         Ok(Client { config })
     }
@@ -253,6 +257,9 @@ mod tests {
 
     #[test]
     fn basic() {
-        let _client = Client::new(Utf8PathBuf::from("../test-keys")).unwrap();
+        let mut keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        keydir.push("test-keys/a");
+        println!("keydir = {}", keydir);
+        let _client = Client::new(keydir).unwrap();
     }
 }
