@@ -18,7 +18,7 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use std::io::prelude::*;
-use std::{fs, sync::Arc};
+use std::{fs::File, sync::Arc};
 use x509_cert::{
     der::{DecodePem, Encode},
     Certificate, PkiPath,
@@ -27,40 +27,86 @@ use x509_cert::{
 /// A resolver for certs that gets them from the local filesystem
 ///
 /// In production we'll retrieve these over IPCC from the RoT
+///
+/// We use hardcoded filenames for simplicity, since we have to build specific
+/// cert chains
 #[derive(Debug)]
 pub struct LocalCertResolver {
-    cert_pem: Utf8PathBuf,
-    privkey_pem: Utf8PathBuf,
+    keydir: Utf8PathBuf,
 }
 
 impl LocalCertResolver {
-    pub fn new(
-        cert_pem: Utf8PathBuf,
-        privkey_pem: Utf8PathBuf,
-    ) -> LocalCertResolver {
-        LocalCertResolver {
-            cert_pem,
-            privkey_pem,
-        }
+    pub fn new(keydir: Utf8PathBuf) -> LocalCertResolver {
+        LocalCertResolver { keydir }
     }
 }
 
 impl LocalCertResolver {
     fn load_certified_key(&self) -> Result<Arc<CertifiedKey>> {
-        let mut cert_pem = Vec::new();
         let mut privkey_pem = Vec::new();
-        fs::File::open(&self.cert_pem)?.read_to_end(&mut cert_pem)?;
-        fs::File::open(&self.privkey_pem)?.read_to_end(&mut privkey_pem)?;
 
-        let (type_label, cert_der) = pem_rfc7468::decode_vec(&cert_pem)?;
-        assert_eq!(type_label, "CERTIFICATE");
+        // Read the private key as a pemfile and convert it to DER that can be
+        // used by rustls
+        let mut privkey_path = self.keydir.clone();
+        privkey_path.push("trust-quorum-dhe.key.pem");
+        File::open(&privkey_path)?.read_to_end(&mut privkey_pem)?;
+
         let (type_label, privkey_der) = pem_rfc7468::decode_vec(&privkey_pem)?;
         assert_eq!(type_label, "PRIVATE KEY");
+
+        // Create a `SigningKey` using the private key
         let signing_key = Arc::new(LocalEd25519SigningKey { privkey_der })
             as Arc<dyn SigningKey>;
 
+        // Load the full cert chain as pemfiles and convert them to a chain
+        // of DER buffers that can be used by rutsls.
+        //
+        // We don't include the root cert, as that is known to the verifier
+        // already.
+
+        // Persistent Identity Cert
+        //
+        // This is the cert for an intermediate on-device CA provisioned at
+        // manufacturing time and used to sign `DeviceId` certs.
+        let mut persistentid_pem = Vec::new();
+        let mut persistentid_path = self.keydir.clone();
+        persistentid_path.push("persistentid.cert.pem");
+        File::open(&persistentid_path)?.read_to_end(&mut persistentid_pem)?;
+        let (type_label, persistentid_der) =
+            pem_rfc7468::decode_vec(&persistentid_pem)?;
+        assert_eq!(type_label, "CERTIFICATE");
+
+        // Device ID Cert
+        //
+        // This is the cert for an embedded CA used to sign measurement certs as
+        // well as DHE authentication certs used in sprockets.
+        let mut deviceid_pem = Vec::new();
+        let mut deviceid_path = self.keydir.clone();
+        deviceid_path.push("deviceid.cert.pem");
+        File::open(&deviceid_path)?.read_to_end(&mut deviceid_pem)?;
+        let (type_label, deviceid_der) =
+            pem_rfc7468::decode_vec(&deviceid_pem)?;
+        assert_eq!(type_label, "CERTIFICATE");
+
+        // Trust quorum DHE cert
+        //
+        // This is the end-entity cert that is used to authenticate the TLS session
+        let mut trust_quorum_dhe_pem = Vec::new();
+        let mut trust_quorum_dhe_path = self.keydir.clone();
+        trust_quorum_dhe_path.push("trust-quorum-dhe.cert.pem");
+        File::open(&trust_quorum_dhe_path)?
+            .read_to_end(&mut trust_quorum_dhe_pem)?;
+        let (type_label, trust_quorum_dhe_der) =
+            pem_rfc7468::decode_vec(&trust_quorum_dhe_pem)?;
+        assert_eq!(type_label, "CERTIFICATE");
+
         Ok(Arc::new(CertifiedKey::new(
-            vec![cert_der.into()],
+            // The end-entity cert must come first, so put the chain in reverse order.
+            vec![
+                trust_quorum_dhe_der.into(),
+                deviceid_der.into(),
+                persistentid_der.into(),
+            ],
             signing_key,
         )))
     }
