@@ -17,4 +17,5 @@ panic = "abort"
 dice-verifier = { path = "../dice-util/verifier" }
 serde = { version = "1", default-features = false }
 thiserror = "1.0.57"
-x509-cert = { version = "0.2.5", default-features = false }
+x509-cert = { version = "0.2.5" }
+pem-rfc7468 = { version = "0.7.0"}
