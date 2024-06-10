@@ -213,26 +213,46 @@ impl ServerCertVerifier for RotServerCertVerifier {
     }
 }
 
-pub struct Client {}
+#[derive(Debug)]
+pub struct Client {
+    config: ClientConfig,
+}
 
 impl Client {
-    pub fn new(
-        root: Certificate,
-        resolver: Arc<dyn ResolvesClientCert>,
-    ) -> anyhow::Result<Client> {
+    pub fn new(keydir: Utf8PathBuf) -> anyhow::Result<Client> {
+        // Read the root certificate
+        let mut root_cert_path = keydir.clone();
+        root_cert_path.push("root.cert.pem");
+        let mut root_cert_pem = Vec::new();
+        File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
+        let root = Certificate::from_pem(&root_cert_pem)?;
+
+        // Create a resolver that can return the cert chain for this client
+        // so the server can authenticate it and a mechanism for signing
+        // transcripts.
+        let resolver = Arc::new(LocalCertResolver::new(keydir))
+            as Arc<dyn ResolvesClientCert>;
+
+        // Create a verifier that is capable of verifying the cert chain of the
+        // server and any signed transcripts.
         let verifier = Arc::new(RotServerCertVerifier::new(root)?)
             as Arc<dyn ServerCertVerifier>;
+
         let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_client_cert_resolver(resolver);
 
-        todo!()
+        Ok(Client { config })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn basic() {}
+    fn basic() {
+        let _client = Client::new(Utf8PathBuf::from("../test-keys")).unwrap();
+    }
 }
