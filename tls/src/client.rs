@@ -19,9 +19,10 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use std::io::prelude::*;
+use std::iter;
 use std::{fs::File, sync::Arc};
 use x509_cert::{
-    der::{DecodePem, Encode},
+    der::{Decode, DecodePem},
     Certificate, PkiPath,
 };
 
@@ -184,7 +185,24 @@ impl ServerCertVerifier for RotServerCertVerifier {
         ocsp_response: &[u8],
         now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        todo!()
+        // Create a PkiPath for our dice-verifier
+        let mut pki_path: Vec<Certificate> = Vec::new();
+
+        for der in iter::once(end_entity).chain(intermediates) {
+            pki_path.push(Certificate::from_der(der).map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?)
+        }
+
+        self.verifier.verify(&pki_path).map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?;
+
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
     fn verify_tls12_signature(
         &self,
