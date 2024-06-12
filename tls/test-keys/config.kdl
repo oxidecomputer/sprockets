@@ -211,8 +211,8 @@ entity "test-sprockets-auth-1" {
 }
 
 certificate "test-sprockets-auth-1" {
-    issuer-certificate "test-platformid-1"
-    issuer-key "test-platformid-1"
+    issuer-certificate "test-deviceid-1"
+    issuer-key "test-deviceid-1"
 
     subject-entity "test-sprockets-auth-1"
     subject-key "test-sprockets-auth-1"
@@ -336,8 +336,8 @@ entity "test-sprockets-auth-2" {
 }
 
 certificate "test-sprockets-auth-2" {
-    issuer-certificate "test-platformid-2"
-    issuer-key "test-platformid-2"
+    issuer-certificate "test-deviceid-2"
+    issuer-key "test-deviceid-2"
 
     subject-entity "test-sprockets-auth-2"
     subject-key "test-sprockets-auth-2"

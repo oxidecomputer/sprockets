@@ -50,7 +50,7 @@ impl LocalCertResolver {
         // Read the private key as a pemfile and convert it to DER that can be
         // used by rustls
         let mut privkey_path = self.keydir.clone();
-        privkey_path.push("trust-quorum-dhe.key.pem");
+        privkey_path.push("test-sprockets-auth-1.key.pem");
         File::open(&privkey_path)?.read_to_end(&mut privkey_pem)?;
 
         let (type_label, privkey_der) = pem_rfc7468::decode_vec(&privkey_pem)?;
@@ -66,48 +66,61 @@ impl LocalCertResolver {
         // We don't include the root cert, as that is known to the verifier
         // already.
 
-        // Persistent Identity Cert
+        // OKS signing cert
         //
-        // This is the cert for an intermediate on-device CA provisioned at
-        // manufacturing time and used to sign `DeviceId` certs.
-        let mut persistentid_pem = Vec::new();
-        let mut persistentid_path = self.keydir.clone();
-        persistentid_path.push("persistentid.cert.pem");
-        File::open(&persistentid_path)?.read_to_end(&mut persistentid_pem)?;
-        let (type_label, persistentid_der) =
-            pem_rfc7468::decode_vec(&persistentid_pem)?;
+        // This is an intermediate signing cert from the Online Signing Service
+        // It's used to sign the on device platformid certs.
+        let mut oks_signer_pem = Vec::new();
+        let mut oks_signer_path = self.keydir.clone();
+        oks_signer_path.push("test-signer-a1.cert.pem");
+        File::open(&oks_signer_path)?.read_to_end(&mut oks_signer_pem)?;
+        let (type_label, oks_signer_der) =
+            pem_rfc7468::decode_vec(&oks_signer_pem)?;
+        assert_eq!(type_label, "CERTIFICATE");
+
+        // A unique id set at manufacturing time for each device
+        //
+        // This is an intermediate embedded signing cert used to sign deviceid
+        // certs.
+        let mut platformid_pem = Vec::new();
+        let mut platformid_path = self.keydir.clone();
+        platformid_path.push("test-platformid-1.cert.pem");
+        File::open(&platformid_path)?.read_to_end(&mut platformid_pem)?;
+        let (type_label, platformid_der) =
+            pem_rfc7468::decode_vec(&platformid_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
 
         // Device ID Cert
         //
         // This is the cert for an embedded CA used to sign measurement certs as
-        // well as DHE authentication certs used in sprockets.
+        // well as TLS authentication certs used in sprockets.
         let mut deviceid_pem = Vec::new();
         let mut deviceid_path = self.keydir.clone();
-        deviceid_path.push("deviceid.cert.pem");
+        deviceid_path.push("test-deviceid-1.cert.pem");
         File::open(&deviceid_path)?.read_to_end(&mut deviceid_pem)?;
         let (type_label, deviceid_der) =
             pem_rfc7468::decode_vec(&deviceid_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
 
-        // Trust quorum DHE cert
+        // The sprockets TLS auth cert
         //
         // This is the end-entity cert that is used to authenticate the TLS session
-        let mut trust_quorum_dhe_pem = Vec::new();
-        let mut trust_quorum_dhe_path = self.keydir.clone();
-        trust_quorum_dhe_path.push("trust-quorum-dhe.cert.pem");
-        File::open(&trust_quorum_dhe_path)?
-            .read_to_end(&mut trust_quorum_dhe_pem)?;
-        let (type_label, trust_quorum_dhe_der) =
-            pem_rfc7468::decode_vec(&trust_quorum_dhe_pem)?;
+        let mut sprockets_auth_pem = Vec::new();
+        let mut sprockets_auth_path = self.keydir.clone();
+        sprockets_auth_path.push("test-sprockets-auth-1.cert.pem");
+        File::open(&sprockets_auth_path)?
+            .read_to_end(&mut sprockets_auth_pem)?;
+        let (type_label, sprockets_auth_der) =
+            pem_rfc7468::decode_vec(&sprockets_auth_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
 
         Ok(Arc::new(CertifiedKey::new(
             // The end-entity cert must come first, so put the chain in reverse order.
             vec![
-                trust_quorum_dhe_der.into(),
+                sprockets_auth_der.into(),
                 deviceid_der.into(),
-                persistentid_der.into(),
+                platformid_der.into(),
+                oks_signer_der.into(),
             ],
             signing_key,
         )))
@@ -196,7 +209,10 @@ impl ServerCertVerifier for RotServerCertVerifier {
             })?)
         }
 
-        self.verifier.verify(&pki_path).map_err(|_| {
+        println!("ayo i'm here");
+
+        self.verifier.verify(&pki_path).map_err(|e| {
+            println!("err = {e}");
             rustls::Error::InvalidCertificate(
                 rustls::CertificateError::BadEncoding,
             )
@@ -238,13 +254,17 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(keydir: Utf8PathBuf) -> anyhow::Result<Client> {
-        // Read the root certificate
+    pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
         let mut root_cert_path = keydir.clone();
-        root_cert_path.push("root.cert.pem");
+        root_cert_path.push("test-root-a.cert.pem");
         let mut root_cert_pem = Vec::new();
         File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
         let root = Certificate::from_pem(&root_cert_pem)?;
+        Ok(root)
+    }
+
+    pub fn new(keydir: Utf8PathBuf) -> anyhow::Result<Client> {
+        let root = Client::load_root_cert(&keydir)?;
 
         // Create a resolver that can return the cert chain for this client
         // so the server can authenticate it and a mechanism for signing
@@ -272,11 +292,35 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls::pki_types::ServerName;
+
+    #[test]
+    // Ensure the test certs can be loaded and verified
+    fn test_client_verifier() {
+        let mut keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        keydir.push("test-keys");
+        let root = Client::load_root_cert(&keydir).unwrap();
+        let verifier = RotServerCertVerifier::new(root).unwrap();
+        let resolver = LocalCertResolver::new(keydir);
+        let certified_key = resolver.load_certified_key().unwrap();
+        let end_entity = certified_key.end_entity_cert().unwrap();
+        let intermediates = &certified_key.cert[1..];
+        let server_name: ServerName = "example.com".try_into().unwrap();
+        verifier
+            .verify_server_cert(
+                &end_entity,
+                intermediates,
+                &server_name,
+                &[],
+                rustls::pki_types::UnixTime::now(),
+            )
+            .unwrap();
+    }
 
     #[test]
     fn basic() {
         let mut keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        keydir.push("test-keys/a");
+        keydir.push("test-keys");
         println!("keydir = {}", keydir);
         let _client = Client::new(keydir).unwrap();
     }
