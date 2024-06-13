@@ -4,7 +4,6 @@
 
 //! A TLS based client
 
-use anyhow::Result;
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
 use pem_rfc7468;
@@ -14,16 +13,16 @@ use rustls::{
         danger::{HandshakeSignatureValid, ServerCertVerifier},
         ResolvesClientCert,
     },
-    pki_types::CertificateDer,
-    sign::{CertifiedKey, SigningKey},
+    sign::{CertifiedKey, Signer, SigningKey},
     ClientConfig, SignatureScheme,
 };
+use sha2::{Digest, Sha512};
 use std::io::prelude::*;
 use std::iter;
 use std::{fs::File, sync::Arc};
 use x509_cert::{
     der::{Decode, DecodePem},
-    Certificate, PkiPath,
+    Certificate,
 };
 
 /// Prefixes for known test keys
@@ -31,7 +30,10 @@ const TEST_AUTH_KEY_PREFIX: &'static str = "test-sprockets-auth-";
 const TEST_DEVICE_ID_PREFIX: &'static str = "test-deviceid-";
 const TEST_PLATFORM_ID_PREFIX: &'static str = "test-platformid-";
 const TEST_OKS_SIGNER_CERT: &'static str = "test-signer-a1.cert.pem";
-const TEST_ROOT_PREFIX: &'static str = "test-root-a";
+const TEST_ROOT_CERT: &'static str = "test-root-a.cert.pem";
+
+// A context for TLS signing
+const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
 
 /// A resolver for certs that gets them from the local filesystem
 ///
@@ -74,7 +76,7 @@ impl LocalCertResolver {
 }
 
 impl LocalCertResolver {
-    fn load_certified_key(&self) -> Result<Arc<CertifiedKey>> {
+    fn load_certified_key(&self) -> anyhow::Result<Arc<CertifiedKey>> {
         // Read the private key as a pemfile and convert it to DER that can be
         // used by rustls
         let mut privkey_pem = Vec::new();
@@ -175,11 +177,39 @@ impl ResolvesClientCert for LocalCertResolver {
     }
 }
 
+/// A mechanism for signing using an in memory Ed25519 private key
+#[derive(Debug)]
+pub struct LocalEd25519Signer {
+    // TODO: Wrap in a secret
+    key: ed25519_dalek::SigningKey,
+}
+
+impl Signer for LocalEd25519Signer {
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+        // We must hash with SHA-512 and then sign the digest
+        let mut prehashed = Sha512::new();
+        prehashed.update(message);
+        let sig = self
+            .key
+            .sign_prehashed(prehashed, Some(TLS_SIGNING_CONTEXT))
+            .map_err(|_| {
+                rustls::Error::General("Failed to sign message".to_string())
+            })?;
+
+        Ok(sig.to_vec())
+    }
+
+    fn scheme(&self) -> SignatureScheme {
+        SignatureScheme::ED25519
+    }
+}
+
 /// An implementation of a an Ed25519 private signing key that lives in memory
 ///
 /// In production we'll send signing requests to the RoT via IPCC and sprot.
 #[derive(Debug)]
 pub struct LocalEd25519SigningKey {
+    // TODO: Wrap in a secret
     privkey_der: Vec<u8>,
 }
 
@@ -192,7 +222,12 @@ impl SigningKey for LocalEd25519SigningKey {
             return None;
         }
 
-        todo!()
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &self.privkey_der.clone().try_into().unwrap(),
+        );
+
+        Some(Box::new(LocalEd25519Signer { key: signing_key })
+            as Box<dyn Signer>)
     }
 
     fn algorithm(&self) -> rustls::SignatureAlgorithm {
@@ -207,7 +242,7 @@ struct RotServerCertVerifier {
 }
 
 impl RotServerCertVerifier {
-    pub fn new(root: Certificate) -> Result<Self> {
+    pub fn new(root: Certificate) -> anyhow::Result<Self> {
         let verifier = PkiPathSignatureVerifier::new(Some(root))?;
         Ok(RotServerCertVerifier { verifier })
     }
@@ -221,7 +256,8 @@ impl ServerCertVerifier for RotServerCertVerifier {
         server_name: &rustls::pki_types::ServerName<'_>,
         ocsp_response: &[u8],
         now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+    ) -> anyhow::Result<rustls::client::danger::ServerCertVerified, rustls::Error>
+    {
         // Create a PkiPath for our dice-verifier
         let mut pki_path: Vec<Certificate> = Vec::new();
 
@@ -247,8 +283,10 @@ impl ServerCertVerifier for RotServerCertVerifier {
         _: &[u8],
         _: &rustls::pki_types::CertificateDer<'_>,
         _: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
-    {
+    ) -> anyhow::Result<
+        rustls::client::danger::HandshakeSignatureValid,
+        rustls::Error,
+    > {
         // We don't allow the use of TLS 1.2
         Err(rustls::Error::PeerIncompatible(
             rustls::PeerIncompatible::Tls12NotOffered,
@@ -260,8 +298,56 @@ impl ServerCertVerifier for RotServerCertVerifier {
         message: &[u8],
         cert: &rustls::pki_types::CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        // TODO: Actually verify the signature :)
+    ) -> anyhow::Result<HandshakeSignatureValid, rustls::Error> {
+        // Get the public key
+        let cert = Certificate::from_der(cert).map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?;
+
+        let pubkey: [u8; 32] = match cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .as_bytes()
+        {
+            Some(pubkey) => pubkey.try_into().map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?,
+            None => {
+                return Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                ))
+            }
+        };
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
+            .map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?;
+
+        // We must hash with SHA-512 and then verify the digest
+        let mut prehashed = Sha512::new();
+        prehashed.update(message);
+
+        let signature = ed25519_dalek::Signature::from_slice(dss.signature())
+            .map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?;
+        verifying_key
+            .verify_prehashed(prehashed, Some(TLS_SIGNING_CONTEXT), &signature)
+            .map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadSignature,
+                )
+            })?;
+
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -278,7 +364,7 @@ pub struct Client {
 impl Client {
     pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
         let mut root_cert_path = keydir.clone();
-        root_cert_path.push("test-root-a.cert.pem");
+        root_cert_path.push(TEST_ROOT_CERT);
         let mut root_cert_pem = Vec::new();
         File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
         let root = Certificate::from_pem(&root_cert_pem)?;

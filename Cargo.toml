@@ -14,8 +14,13 @@ panic = "abort"
 panic = "abort"
 
 [workspace.dependencies]
+anyhow = { version = "1", default-features = false }
+camino = { version = "1.1.7" }
 dice-verifier = { path = "../dice-util/verifier" }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["digest"] }
+pem-rfc7468 = { version = "0.7.0"}
+rustls = { version = "0.23.9", default-features = false, features = ["std", "ring", "logging"] }
 serde = { version = "1", default-features = false }
+sha2 = "0.10"
 thiserror = "1.0.57"
 x509-cert = { version = "0.2.5" }
-pem-rfc7468 = { version = "0.7.0"}
