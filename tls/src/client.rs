@@ -6,7 +6,7 @@
 
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
-use ed25519_dalek::pkcs8::{DecodePrivateKey, PrivateKeyInfo};
+use ed25519_dalek::pkcs8::PrivateKeyInfo;
 use pem_rfc7468;
 use rustls::version::TLS13;
 use rustls::{
@@ -26,12 +26,21 @@ use x509_cert::{
     Certificate,
 };
 
-/// Prefixes for known test keys
-const TEST_AUTH_KEY_PREFIX: &'static str = "test-sprockets-auth-";
-const TEST_DEVICE_ID_PREFIX: &'static str = "test-deviceid-";
-const TEST_PLATFORM_ID_PREFIX: &'static str = "test-platformid-";
-const TEST_OKS_SIGNER_CERT: &'static str = "test-signer-a1.cert.pem";
-const TEST_ROOT_CERT: &'static str = "test-root-a.cert.pem";
+// These are on device keys and certs that differ for each node
+//
+// In production, we won't use files to load them but will retrieve them from
+// the RoT over IPCC.
+const SPROCKETS_AUTH_CERT_FILENAME: &'static str = "sprockets-auth.cert.pem";
+const SPROCKETS_AUTH_KEY_FILENAME: &'static str = "sprockets-auth.key.pem";
+const DEVICE_ID_CERT_FILENAME: &'static str = "deviceid.cert.pem";
+const DEVICE_ID_KEY_FILENAME: &'static str = "deviceid.key.pem";
+const PLATFORM_ID_CERT_FILENAME: &'static str = "platformid.cert.pem";
+const PLATFORM_ID_KEY_FILENAME: &'static str = "platformid.key.pem";
+
+/// These certs are shared across different nodes and used for PKI cert chain
+/// validation.
+const OKS_SIGNER_CERT_FILENAME: &'static str = "oks-signer.cert.pem";
+const ROOT_CERT_FILENAME: &'static str = "root.cert.pem";
 
 // A context for TLS signing
 const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
@@ -45,34 +54,23 @@ const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
 /// cert chains
 #[derive(Debug)]
 pub struct LocalCertResolver {
-    keydir: Utf8PathBuf,
-    key_index: usize,
+    /// Directory containing public key certs for the root and intermediate
+    /// online signing key.
+    pki_keydir: Utf8PathBuf,
+
+    /// Directory containing "on-device" certs and private keys
+    node_keydir: Utf8PathBuf,
 }
 
 impl LocalCertResolver {
-    pub fn new(keydir: Utf8PathBuf, key_index: usize) -> LocalCertResolver {
-        LocalCertResolver { keydir, key_index }
-    }
-
-    /// A path to a device specific private key
-    ///
-    /// This is only useful for device unique keys: platform id, device id,
-    /// auth, measurement
-    pub fn device_private_keypath(&self, prefix: &'static str) -> Utf8PathBuf {
-        let mut path = self.keydir.clone();
-        let filename = format!("{prefix}{}.key.pem", self.key_index);
-        path.push(&filename);
-        path
-    }
-    /// A path to a device specific certificate
-    ///
-    /// This is only useful for device unique keys: platform id, device id,
-    /// auth, measurement
-    pub fn device_certpath(&self, prefix: &'static str) -> Utf8PathBuf {
-        let mut path = self.keydir.clone();
-        let filename = format!("{prefix}{}.cert.pem", self.key_index);
-        path.push(&filename);
-        path
+    pub fn new(
+        pki_keydir: Utf8PathBuf,
+        node_keydir: Utf8PathBuf,
+    ) -> LocalCertResolver {
+        LocalCertResolver {
+            pki_keydir,
+            node_keydir,
+        }
     }
 }
 
@@ -81,7 +79,8 @@ impl LocalCertResolver {
         // Read the private key as a pemfile and convert it to DER that can be
         // used by rustls
         let mut privkey_pem = Vec::new();
-        let path = self.device_private_keypath(TEST_AUTH_KEY_PREFIX);
+        let mut path = self.node_keydir.clone();
+        path.push(SPROCKETS_AUTH_KEY_FILENAME);
         File::open(&path)?.read_to_end(&mut privkey_pem)?;
 
         let (type_label, privkey_der) = pem_rfc7468::decode_vec(&privkey_pem)?;
@@ -102,9 +101,9 @@ impl LocalCertResolver {
         // This is an intermediate signing cert from the Online Signing Service
         // It's used to sign the on device platformid certs.
         let mut oks_signer_pem = Vec::new();
-        let mut oks_signer_path = self.keydir.clone();
-        oks_signer_path.push(TEST_OKS_SIGNER_CERT);
-        File::open(&oks_signer_path)?.read_to_end(&mut oks_signer_pem)?;
+        let mut path = self.pki_keydir.clone();
+        path.push(OKS_SIGNER_CERT_FILENAME);
+        File::open(&path)?.read_to_end(&mut oks_signer_pem)?;
         let (type_label, oks_signer_der) =
             pem_rfc7468::decode_vec(&oks_signer_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
@@ -114,7 +113,8 @@ impl LocalCertResolver {
         // This is an intermediate embedded signing cert used to sign deviceid
         // certs.
         let mut platformid_pem = Vec::new();
-        let path = self.device_certpath(TEST_PLATFORM_ID_PREFIX);
+        let mut path = self.node_keydir.clone();
+        path.push(PLATFORM_ID_CERT_FILENAME);
         File::open(&path)?.read_to_end(&mut platformid_pem)?;
         let (type_label, platformid_der) =
             pem_rfc7468::decode_vec(&platformid_pem)?;
@@ -125,7 +125,8 @@ impl LocalCertResolver {
         // This is the cert for an embedded CA used to sign measurement certs as
         // well as TLS authentication certs used in sprockets.
         let mut deviceid_pem = Vec::new();
-        let path = self.device_certpath(TEST_DEVICE_ID_PREFIX);
+        let mut path = self.node_keydir.clone();
+        path.push(DEVICE_ID_CERT_FILENAME);
         File::open(&path)?.read_to_end(&mut deviceid_pem)?;
         let (type_label, deviceid_der) =
             pem_rfc7468::decode_vec(&deviceid_pem)?;
@@ -135,7 +136,8 @@ impl LocalCertResolver {
         //
         // This is the end-entity cert that is used to authenticate the TLS session
         let mut sprockets_auth_pem = Vec::new();
-        let path = self.device_certpath(TEST_AUTH_KEY_PREFIX);
+        let mut path = self.node_keydir.clone();
+        path.push(SPROCKETS_AUTH_CERT_FILENAME);
         File::open(&path)?.read_to_end(&mut sprockets_auth_pem)?;
         let (type_label, sprockets_auth_der) =
             pem_rfc7468::decode_vec(&sprockets_auth_pem)?;
@@ -377,7 +379,7 @@ pub struct Client {
 impl Client {
     pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
         let mut root_cert_path = keydir.clone();
-        root_cert_path.push(TEST_ROOT_CERT);
+        root_cert_path.push(ROOT_CERT_FILENAME);
         let mut root_cert_pem = Vec::new();
         File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
         let root = Certificate::from_pem(&root_cert_pem)?;
@@ -385,15 +387,15 @@ impl Client {
     }
 
     pub fn new(
-        keydir: Utf8PathBuf,
-        key_index: usize,
+        pki_keydir: Utf8PathBuf,
+        node_keydir: Utf8PathBuf,
     ) -> anyhow::Result<Client> {
-        let root = Client::load_root_cert(&keydir)?;
+        let root = Client::load_root_cert(&pki_keydir)?;
 
         // Create a resolver that can return the cert chain for this client
         // so the server can authenticate it and a mechanism for signing
         // transcripts.
-        let resolver = Arc::new(LocalCertResolver::new(keydir, key_index))
+        let resolver = Arc::new(LocalCertResolver::new(pki_keydir, node_keydir))
             as Arc<dyn ResolvesClientCert>;
 
         // Create a verifier that is capable of verifying the cert chain of the
@@ -421,11 +423,13 @@ mod tests {
     #[test]
     // Ensure the test certs can be loaded and verified
     fn test_client_verifier() {
-        let mut keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        keydir.push("test-keys");
-        let root = Client::load_root_cert(&keydir).unwrap();
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let mut node_keydir = pki_keydir.clone();
+        node_keydir.push("sled1");
+        let root = Client::load_root_cert(&pki_keydir).unwrap();
         let verifier = RotServerCertVerifier::new(root).unwrap();
-        let resolver = LocalCertResolver::new(keydir, 1);
+        let resolver = LocalCertResolver::new(pki_keydir, node_keydir);
         let certified_key = resolver.load_certified_key().unwrap();
         let end_entity = certified_key.end_entity_cert().unwrap();
         let intermediates = &certified_key.cert[1..];
@@ -456,9 +460,10 @@ mod tests {
 
     #[test]
     fn basic() {
-        let mut keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        keydir.push("test-keys");
-        println!("keydir = {}", keydir);
-        let _client = Client::new(keydir, 1).unwrap();
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let mut node_keydir = pki_keydir.clone();
+        node_keydir.push("sled1");
+        let _client = Client::new(pki_keydir, node_keydir).unwrap();
     }
 }
