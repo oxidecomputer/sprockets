@@ -6,6 +6,7 @@
 
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
+use ed25519_dalek::pkcs8::{DecodePrivateKey, PrivateKeyInfo};
 use pem_rfc7468;
 use rustls::version::TLS13;
 use rustls::{
@@ -222,9 +223,11 @@ impl SigningKey for LocalEd25519SigningKey {
             return None;
         }
 
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(
-            &self.privkey_der.clone().try_into().unwrap(),
-        );
+        let privkey_info =
+            PrivateKeyInfo::try_from(self.privkey_der.as_slice()).ok()?;
+
+        let signing_key =
+            ed25519_dalek::SigningKey::try_from(privkey_info).ok()?;
 
         Some(Box::new(LocalEd25519Signer { key: signing_key })
             as Box<dyn Signer>)
@@ -245,6 +248,67 @@ impl RotServerCertVerifier {
     pub fn new(root: Certificate) -> anyhow::Result<Self> {
         let verifier = PkiPathSignatureVerifier::new(Some(root))?;
         Ok(RotServerCertVerifier { verifier })
+    }
+
+    /// This is broken out solely for testing purposes, as it's not possible
+    /// to create a `rutsls::DigitallySignedStruct` outside the rustls crate.
+    fn verify_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        sig: &[u8],
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+    {
+        // Get the public key
+        let cert = Certificate::from_der(cert).map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?;
+
+        let pubkey: [u8; 32] = match cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .as_bytes()
+        {
+            Some(pubkey) => pubkey.try_into().map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?,
+            None => {
+                return Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                ))
+            }
+        };
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
+            .map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?;
+
+        // We must hash with SHA-512 and then verify the digest
+        let mut prehashed = Sha512::new();
+        prehashed.update(message);
+
+        let signature =
+            ed25519_dalek::Signature::from_slice(sig).map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?;
+        verifying_key
+            .verify_prehashed(prehashed, Some(TLS_SIGNING_CONTEXT), &signature)
+            .map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadSignature,
+                )
+            })?;
+
+        Ok(HandshakeSignatureValid::assertion())
     }
 }
 
@@ -283,10 +347,8 @@ impl ServerCertVerifier for RotServerCertVerifier {
         _: &[u8],
         _: &rustls::pki_types::CertificateDer<'_>,
         _: &rustls::DigitallySignedStruct,
-    ) -> anyhow::Result<
-        rustls::client::danger::HandshakeSignatureValid,
-        rustls::Error,
-    > {
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+    {
         // We don't allow the use of TLS 1.2
         Err(rustls::Error::PeerIncompatible(
             rustls::PeerIncompatible::Tls12NotOffered,
@@ -299,56 +361,7 @@ impl ServerCertVerifier for RotServerCertVerifier {
         cert: &rustls::pki_types::CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> anyhow::Result<HandshakeSignatureValid, rustls::Error> {
-        // Get the public key
-        let cert = Certificate::from_der(cert).map_err(|_| {
-            rustls::Error::InvalidCertificate(
-                rustls::CertificateError::BadEncoding,
-            )
-        })?;
-
-        let pubkey: [u8; 32] = match cert
-            .tbs_certificate
-            .subject_public_key_info
-            .subject_public_key
-            .as_bytes()
-        {
-            Some(pubkey) => pubkey.try_into().map_err(|_| {
-                rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadEncoding,
-                )
-            })?,
-            None => {
-                return Err(rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadEncoding,
-                ))
-            }
-        };
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
-            .map_err(|_| {
-                rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadEncoding,
-                )
-            })?;
-
-        // We must hash with SHA-512 and then verify the digest
-        let mut prehashed = Sha512::new();
-        prehashed.update(message);
-
-        let signature = ed25519_dalek::Signature::from_slice(dss.signature())
-            .map_err(|_| {
-            rustls::Error::InvalidCertificate(
-                rustls::CertificateError::BadEncoding,
-            )
-        })?;
-        verifying_key
-            .verify_prehashed(prehashed, Some(TLS_SIGNING_CONTEXT), &signature)
-            .map_err(|_| {
-                rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadSignature,
-                )
-            })?;
-
-        Ok(HandshakeSignatureValid::assertion())
+        self.verify_signature(message, cert, dss.signature())
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -417,6 +430,8 @@ mod tests {
         let end_entity = certified_key.end_entity_cert().unwrap();
         let intermediates = &certified_key.cert[1..];
         let server_name: ServerName = "example.com".try_into().unwrap();
+
+        // Verify that the cert chain is valid
         verifier
             .verify_server_cert(
                 &end_entity,
@@ -426,6 +441,17 @@ mod tests {
                 rustls::pki_types::UnixTime::now(),
             )
             .unwrap();
+
+        // Now create a signature over an arbitrary message using our
+        // LocalEd25519Signer and then verify it.
+        let message = b"sign-me-then-verify-me";
+        let signer = certified_key
+            .key
+            .choose_scheme(&[SignatureScheme::ED25519])
+            .unwrap();
+        let signature = signer.sign(message).unwrap();
+        let res = verifier.verify_signature(message, end_entity, &signature);
+        assert!(res.is_ok());
     }
 
     #[test]
