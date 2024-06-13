@@ -24,23 +24,20 @@ use x509_cert::{der::Decode, Certificate};
 //
 // In production, we won't use files to load them but will retrieve them from
 // the RoT over IPCC.
-pub(crate) const SPROCKETS_AUTH_CERT_FILENAME: &'static str =
-    "sprockets-auth.cert.pem";
-pub(crate) const SPROCKETS_AUTH_KEY_FILENAME: &'static str =
-    "sprockets-auth.key.pem";
-pub(crate) const DEVICE_ID_CERT_FILENAME: &'static str = "deviceid.cert.pem";
-pub(crate) const DEVICE_ID_KEY_FILENAME: &'static str = "deviceid.key.pem";
-pub(crate) const PLATFORM_ID_CERT_FILENAME: &'static str =
-    "platformid.cert.pem";
-pub(crate) const PLATFORM_ID_KEY_FILENAME: &'static str = "platformid.key.pem";
+const SPROCKETS_AUTH_CERT_FILENAME: &'static str = "sprockets-auth.cert.pem";
+const SPROCKETS_AUTH_KEY_FILENAME: &'static str = "sprockets-auth.key.pem";
+const DEVICE_ID_CERT_FILENAME: &'static str = "deviceid.cert.pem";
+const DEVICE_ID_KEY_FILENAME: &'static str = "deviceid.key.pem";
+const PLATFORM_ID_CERT_FILENAME: &'static str = "platformid.cert.pem";
+const PLATFORM_ID_KEY_FILENAME: &'static str = "platformid.key.pem";
 
 /// These certs are shared across different nodes and used for PKI cert chain
 /// validation.
-pub(crate) const OKS_SIGNER_CERT_FILENAME: &'static str = "oks-signer.cert.pem";
+const OKS_SIGNER_CERT_FILENAME: &'static str = "oks-signer.cert.pem";
 pub(crate) const ROOT_CERT_FILENAME: &'static str = "root.cert.pem";
 
 // A context for TLS signing
-pub(crate) const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
+const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
 
 /// A resolver for certs that gets them from the local filesystem
 ///
@@ -225,8 +222,6 @@ impl RotCertVerifier {
         Ok(RotCertVerifier { verifier })
     }
 
-    /// This is broken out solely for testing purposes, as it's not possible
-    /// to create a `rutsls::DigitallySignedStruct` outside the rustls crate.
     fn verify_signature(
         &self,
         message: &[u8],
