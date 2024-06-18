@@ -8,7 +8,9 @@ use camino::Utf8PathBuf;
 use rustls::version::TLS13;
 use rustls::{
     client::{
-        danger::{HandshakeSignatureValid, ServerCertVerifier},
+        danger::{
+            HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
+        },
         ResolvesClientCert,
     },
     sign::CertifiedKey,
@@ -22,7 +24,9 @@ use x509_cert::{
     Certificate,
 };
 
-use crate::{LocalCertResolver, RotCertVerifier, ROOT_CERT_FILENAME};
+use crate::{
+    load_root_cert, LocalCertResolver, RotCertVerifier, ROOT_CERT_FILENAME,
+};
 
 impl ResolvesClientCert for LocalCertResolver {
     fn resolve(
@@ -30,6 +34,8 @@ impl ResolvesClientCert for LocalCertResolver {
         _root_hint_subjects: &[&[u8]],
         sigschemes: &[SignatureScheme],
     ) -> Option<Arc<CertifiedKey>> {
+        // TODO: Do we need to use `_root_hint_subjects`?
+
         // We only support Ed25519
         if !sigschemes.iter().any(|&s| s == SignatureScheme::ED25519) {
             return None;
@@ -49,34 +55,19 @@ impl ResolvesClientCert for LocalCertResolver {
 }
 
 impl ServerCertVerifier for RotCertVerifier {
+    // We explicitly ignore the timestamp since we may be operating before the
+    // rack has proper time.
     fn verify_server_cert(
         &self,
         end_entity: &rustls::pki_types::CertificateDer<'_>,
         intermediates: &[rustls::pki_types::CertificateDer<'_>],
         server_name: &rustls::pki_types::ServerName<'_>,
         ocsp_response: &[u8],
-        now: rustls::pki_types::UnixTime,
-    ) -> anyhow::Result<rustls::client::danger::ServerCertVerified, rustls::Error>
-    {
-        // Create a PkiPath for our dice-verifier
-        let mut pki_path: Vec<Certificate> = Vec::new();
-
-        for der in iter::once(end_entity).chain(intermediates) {
-            pki_path.push(Certificate::from_der(der).map_err(|_| {
-                rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadEncoding,
-                )
-            })?)
-        }
-
-        self.verifier.verify(&pki_path).map_err(|e| {
-            println!("err = {e}");
-            rustls::Error::InvalidCertificate(
-                rustls::CertificateError::BadEncoding,
-            )
-        })?;
-
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // TODO: Validate `server_name` and `ocsp_response`?
+        self.verify_cert(end_entity, intermediates)?;
+        Ok(ServerCertVerified::assertion())
     }
     fn verify_tls12_signature(
         &self,
@@ -111,26 +102,11 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
-        let mut root_cert_path = keydir.clone();
-        root_cert_path.push(ROOT_CERT_FILENAME);
-        let mut root_cert_pem = Vec::new();
-        File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
-        let root = Certificate::from_pem(&root_cert_pem)?;
-        Ok(root)
-    }
-
     pub fn new(
-        pki_keydir: Utf8PathBuf,
-        node_keydir: Utf8PathBuf,
+        root_keydir: &Utf8PathBuf,
+        resolver: Arc<dyn ResolvesClientCert>,
     ) -> anyhow::Result<Client> {
-        let root = Client::load_root_cert(&pki_keydir)?;
-
-        // Create a resolver that can return the cert chain for this client
-        // so the server can authenticate it and a mechanism for signing
-        // transcripts.
-        let resolver = Arc::new(LocalCertResolver::new(pki_keydir, node_keydir))
-            as Arc<dyn ResolvesClientCert>;
+        let root = load_root_cert(&root_keydir)?;
 
         // Create a verifier that is capable of verifying the cert chain of the
         // server and any signed transcripts.
@@ -161,7 +137,7 @@ mod tests {
         pki_keydir.push("test-keys");
         let mut node_keydir = pki_keydir.clone();
         node_keydir.push("sled1");
-        let root = Client::load_root_cert(&pki_keydir).unwrap();
+        let root = load_root_cert(&pki_keydir).unwrap();
         let verifier = RotCertVerifier::new(root).unwrap();
         let resolver = LocalCertResolver::new(pki_keydir, node_keydir);
         let certified_key = resolver.load_certified_key().unwrap();
@@ -198,6 +174,13 @@ mod tests {
         pki_keydir.push("test-keys");
         let mut node_keydir = pki_keydir.clone();
         node_keydir.push("sled1");
-        let _client = Client::new(pki_keydir, node_keydir).unwrap();
+        // Create a resolver that can return the cert chain for this client
+        // so the server can authenticate it and a mechanism for signing
+        // transcripts.
+        let resolver =
+            Arc::new(LocalCertResolver::new(pki_keydir.clone(), node_keydir))
+                as Arc<dyn ResolvesClientCert>;
+
+        let _client = Client::new(&pki_keydir, resolver).unwrap();
     }
 }

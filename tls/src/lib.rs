@@ -17,8 +17,12 @@ use rustls::{
 };
 use sha2::{Digest, Sha512};
 use std::io::prelude::*;
+use std::iter;
 use std::{fs::File, sync::Arc};
-use x509_cert::{der::Decode, Certificate};
+use x509_cert::{
+    der::{Decode, DecodePem},
+    Certificate,
+};
 
 // These are on device keys and certs that differ for each node
 //
@@ -37,7 +41,19 @@ const OKS_SIGNER_CERT_FILENAME: &'static str = "oks-signer.cert.pem";
 pub(crate) const ROOT_CERT_FILENAME: &'static str = "root.cert.pem";
 
 // A context for TLS signing
+//
+// Please don't confuse my deputies
 const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
+
+/// Load a root certificate from a given path
+pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
+    let mut root_cert_path = keydir.clone();
+    root_cert_path.push(ROOT_CERT_FILENAME);
+    let mut root_cert_pem = Vec::new();
+    File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
+    let root = Certificate::from_pem(&root_cert_pem)?;
+    Ok(root)
+}
 
 /// A resolver for certs that gets them from the local filesystem
 ///
@@ -220,6 +236,39 @@ impl RotCertVerifier {
     pub fn new(root: Certificate) -> anyhow::Result<Self> {
         let verifier = PkiPathSignatureVerifier::new(Some(root))?;
         Ok(RotCertVerifier { verifier })
+    }
+
+    /// Create a `PkiPath` suitable for `dice-verifier`
+    fn pki_path(
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+    ) -> Result<Vec<Certificate>, rustls::Error> {
+        let mut pki_path = Vec::new();
+        for der in iter::once(end_entity).chain(intermediates) {
+            pki_path.push(Certificate::from_der(der).map_err(|_| {
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                )
+            })?)
+        }
+        Ok(pki_path)
+    }
+
+    /// Verify the certificate chain via `dice-verifier`
+    pub fn verify_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+    ) -> Result<(), rustls::Error> {
+        let pki_path = Self::pki_path(end_entity, intermediates)?;
+        self.verifier.verify(&pki_path).map_err(|e| {
+            println!("err = {e}");
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?;
+
+        Ok(())
     }
 
     fn verify_signature(
