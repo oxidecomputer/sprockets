@@ -44,7 +44,7 @@ impl ResolvesServerCert for LocalCertResolver {
         if !client_hello
             .cipher_suites()
             .iter()
-            .all(|&s| s == CipherSuite::TLS13_CHACHA20_POLY1305_SHA256)
+            .any(|&s| s == CipherSuite::TLS13_CHACHA20_POLY1305_SHA256)
         {
             return None;
         }
@@ -114,7 +114,7 @@ impl ClientCertVerifier for RotCertVerifier {
 
 #[derive(Debug)]
 pub struct Server {
-    config: ServerConfig,
+    pub config: ServerConfig,
 }
 
 impl Server {

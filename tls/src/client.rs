@@ -99,7 +99,7 @@ impl ServerCertVerifier for RotCertVerifier {
 
 #[derive(Debug)]
 pub struct Client {
-    config: ClientConfig,
+    pub config: ClientConfig,
 }
 
 impl Client {
@@ -170,21 +170,5 @@ mod tests {
         let signature = signer.sign(message).unwrap();
         let res = verifier.verify_signature(message, end_entity, &signature);
         assert!(res.is_ok());
-    }
-
-    #[test]
-    fn basic() {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
-        let mut node_keydir = pki_keydir.clone();
-        node_keydir.push("sled1");
-        // Create a resolver that can return the cert chain for this client
-        // so the server can authenticate it and a mechanism for signing
-        // transcripts.
-        let resolver =
-            Arc::new(LocalCertResolver::new(pki_keydir.clone(), node_keydir))
-                as Arc<dyn ResolvesClientCert>;
-
-        let _client = Client::new(&pki_keydir, resolver).unwrap();
     }
 }

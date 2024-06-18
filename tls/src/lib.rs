@@ -4,9 +4,6 @@
 
 //! TLS based connections
 
-mod client;
-mod server;
-
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
 use ed25519_dalek::pkcs8::PrivateKeyInfo;
@@ -23,6 +20,9 @@ use x509_cert::{
     der::{Decode, DecodePem},
     Certificate,
 };
+
+mod client;
+mod server;
 
 // These are on device keys and certs that differ for each node
 //
@@ -328,5 +328,80 @@ impl RotCertVerifier {
             })?;
 
         Ok(HandshakeSignatureValid::assertion())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::Client;
+    use rustls::client::ResolvesClientCert;
+    use rustls::server::ResolvesServerCert;
+    use server::Server;
+    use std::{
+        net::{TcpListener, TcpStream},
+        time,
+    };
+
+    #[test]
+    fn basic() {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let mut client_node_keydir = pki_keydir.clone();
+        client_node_keydir.push("sled1");
+        let mut server_node_keydir = pki_keydir.clone();
+        server_node_keydir.push("sled2");
+
+        // Create a resolver that can return the cert chain for this client so
+        // the server can authenticate it, along with a mechanism for signing
+        // transcripts.
+        let client_resolver = Arc::new(LocalCertResolver::new(
+            pki_keydir.clone(),
+            client_node_keydir,
+        )) as Arc<dyn ResolvesClientCert>;
+
+        // Create a resolver that can return the cert chain for this server so
+        // the client can authenticate it, along with a mechanism for signing
+        // transcripts.
+        let server_resolver = Arc::new(LocalCertResolver::new(
+            pki_keydir.clone(),
+            server_node_keydir,
+        )) as Arc<dyn ResolvesServerCert>;
+
+        // Create our client
+        let client = Client::new(&pki_keydir, client_resolver).unwrap();
+
+        // Create our server
+        let server = Server::new(&pki_keydir, server_resolver).unwrap();
+
+        // Message to send over TLS
+        const MSG: &[u8] = b"Hello Joe";
+
+        // Accept a single connection and do some TLS
+        std::thread::spawn(move || {
+            let listener = TcpListener::bind("[::1]:46456").unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut conn =
+                rustls::ServerConnection::new(Arc::new(server.config.clone()))
+                    .unwrap();
+            conn.complete_io(&mut stream).unwrap();
+
+            let mut buf = Vec::new();
+            let _ = conn.reader().read_to_end(&mut buf).unwrap();
+            assert_eq!(buf, MSG.to_vec());
+        });
+
+        // Our cert resolver and verifier currently ignore the hostname
+        let mut conn = rustls::ClientConnection::new(
+            Arc::new(client.config.clone()),
+            "example.com".try_into().unwrap(),
+        )
+        .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let mut sock = TcpStream::connect("[::1]:46456").unwrap();
+        let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+        tls.write_all(&MSG).unwrap();
     }
 }
