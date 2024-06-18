@@ -4,7 +4,9 @@
 
 //! A TLS based server
 
+use crate::load_root_cert;
 use camino::Utf8PathBuf;
+use rustls::crypto::ring::kx_group::X25519;
 use rustls::version::TLS13;
 use rustls::{
     server::{
@@ -116,7 +118,27 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new() -> Server {
-        todo!()
+    pub fn new(
+        root_keydir: &Utf8PathBuf,
+        resolver: Arc<dyn ResolvesServerCert>,
+    ) -> anyhow::Result<Server> {
+        let root = load_root_cert(&root_keydir)?;
+
+        // Create a verifier that is capable of verifying the cert chain of the
+        // server and any signed transcripts.
+        let verifier = Arc::new(RotCertVerifier::new(root)?)
+            as Arc<dyn ClientCertVerifier>;
+
+        // Use ring as a crypto provider and only allow X25519 for key exchange
+        let mut crypto_provider = rustls::crypto::ring::default_provider();
+        crypto_provider.kx_groups = vec![X25519];
+
+        let config =
+            ServerConfig::builder_with_provider(Arc::new(crypto_provider))
+                .with_protocol_versions(&[&TLS13])?
+                .with_client_cert_verifier(verifier)
+                .with_cert_resolver(resolver);
+
+        Ok(Server { config })
     }
 }
