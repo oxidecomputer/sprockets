@@ -7,8 +7,11 @@
 use camino::Utf8PathBuf;
 use dice_verifier::PkiPathSignatureVerifier;
 use ed25519_dalek::pkcs8::PrivateKeyInfo;
+use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
+use rustls::crypto::ring::kx_group::X25519;
 use rustls::{
     client::danger::HandshakeSignatureValid,
+    crypto::CryptoProvider,
     sign::{CertifiedKey, Signer, SigningKey},
     SignatureScheme,
 };
@@ -53,6 +56,21 @@ pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
     File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
     let root = Certificate::from_pem(&root_cert_pem)?;
     Ok(root)
+}
+
+/// Return a common [`CryptoProvider`] for use by both client and server.
+///
+/// Use ring as a crypto provider
+///
+/// Only allow X25519 for key exchange
+/// Only allow CHACHA_POLY1305_SHA256 for symmetric crypto; TODO: Should we instead
+/// use AES_256_GCM_SHA384, which is hw accelerated? Non-hw accelerated AES is vulnerable
+/// to timing attacks typically.
+pub fn crypto_provider() -> CryptoProvider {
+    let mut crypto_provider = rustls::crypto::ring::default_provider();
+    crypto_provider.kx_groups = vec![X25519];
+    crypto_provider.cipher_suites = vec![TLS13_CHACHA20_POLY1305_SHA256];
+    crypto_provider
 }
 
 /// A resolver for certs that gets them from the local filesystem

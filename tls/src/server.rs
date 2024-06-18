@@ -24,7 +24,7 @@ use x509_cert::{
     Certificate,
 };
 
-use crate::{LocalCertResolver, RotCertVerifier, ROOT_CERT_FILENAME};
+use crate::{crypto_provider, LocalCertResolver, RotCertVerifier};
 
 impl ResolvesServerCert for LocalCertResolver {
     fn resolve(
@@ -129,12 +129,8 @@ impl Server {
         let verifier = Arc::new(RotCertVerifier::new(root)?)
             as Arc<dyn ClientCertVerifier>;
 
-        // Use ring as a crypto provider and only allow X25519 for key exchange
-        let mut crypto_provider = rustls::crypto::ring::default_provider();
-        crypto_provider.kx_groups = vec![X25519];
-
         let config =
-            ServerConfig::builder_with_provider(Arc::new(crypto_provider))
+            ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
                 .with_protocol_versions(&[&TLS13])?
                 .with_client_cert_verifier(verifier)
                 .with_cert_resolver(resolver);

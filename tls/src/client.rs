@@ -5,7 +5,6 @@
 //! A TLS based client
 
 use camino::Utf8PathBuf;
-use rustls::crypto::ring::kx_group::X25519;
 use rustls::version::TLS13;
 use rustls::{
     client::{
@@ -26,7 +25,7 @@ use x509_cert::{
 };
 
 use crate::{
-    load_root_cert, LocalCertResolver, RotCertVerifier, ROOT_CERT_FILENAME,
+    crypto_provider, load_root_cert, LocalCertResolver, RotCertVerifier,
 };
 
 impl ResolvesClientCert for LocalCertResolver {
@@ -114,12 +113,8 @@ impl Client {
         let verifier = Arc::new(RotCertVerifier::new(root)?)
             as Arc<dyn ServerCertVerifier>;
 
-        // Use ring as a crypto provider and only allow X25519 for key exchange
-        let mut crypto_provider = rustls::crypto::ring::default_provider();
-        crypto_provider.kx_groups = vec![X25519];
-
         let config =
-            ClientConfig::builder_with_provider(Arc::new(crypto_provider))
+            ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
                 .with_protocol_versions(&[&TLS13])?
                 .dangerous()
                 .with_custom_certificate_verifier(verifier)
