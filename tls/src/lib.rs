@@ -60,7 +60,7 @@ pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
 ///
-/// Use ring as a crypto provider
+/// Use ring as a crypto provider. aws_lc doesn't compile on illumos.
 ///
 /// Only allow X25519 for key exchange
 /// Only allow CHACHA_POLY1305_SHA256 for symmetric crypto; TODO: Should we instead
@@ -357,6 +357,7 @@ mod tests {
     use rustls::server::ResolvesServerCert;
     use server::Server;
     use std::{
+        io::ErrorKind,
         net::{TcpListener, TcpStream},
         time,
     };
@@ -395,6 +396,8 @@ mod tests {
         // Message to send over TLS
         const MSG: &[u8] = b"Hello Joe";
 
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
         // Accept a single connection and do some TLS
         std::thread::spawn(move || {
             let listener = TcpListener::bind("[::1]:46456").unwrap();
@@ -404,9 +407,31 @@ mod tests {
                     .unwrap();
             conn.complete_io(&mut stream).unwrap();
 
-            let mut buf = Vec::new();
-            let _ = conn.reader().read_to_end(&mut buf).unwrap();
-            assert_eq!(buf, MSG.to_vec());
+            let mut total_len = 0;
+            let mut buf = [0u8; 1024];
+            loop {
+                match conn.reader().read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(len) => {
+                        total_len += len;
+                        if total_len >= MSG.len() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        if let ErrorKind::WouldBlock = e.kind() {
+                            conn.complete_io(&mut stream).unwrap();
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            assert_eq!(&buf[..total_len], MSG);
+
+            // Inform the other thread that the test is complete.
+            let _ = done_tx.send(());
         });
 
         // Our cert resolver and verifier currently ignore the hostname
@@ -416,10 +441,17 @@ mod tests {
         )
         .unwrap();
 
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        let mut sock = TcpStream::connect("[::1]:46456").unwrap();
+        // Loop until we succesfully connect
+        let mut sock = loop {
+            if let Ok(sock) = TcpStream::connect("[::1]:46456") {
+                break sock;
+            }
+        };
         let mut tls = rustls::Stream::new(&mut conn, &mut sock);
         tls.write_all(&MSG).unwrap();
+
+        // Wait for the other side of the connection to receive and assert the
+        // message
+        let _ = done_rx.recv();
     }
 }
