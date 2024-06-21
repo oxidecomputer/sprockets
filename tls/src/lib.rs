@@ -15,6 +15,7 @@ use rustls::{
     sign::{CertifiedKey, Signer, SigningKey},
     SignatureScheme,
 };
+use secrecy::{DebugSecret, ExposeSecret, Secret};
 use sha2::{Digest, Sha512};
 use slog::{error, info};
 use std::io::prelude::*;
@@ -24,6 +25,7 @@ use x509_cert::{
     der::{Decode, DecodePem},
     Certificate,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 mod client;
 mod server;
@@ -65,9 +67,8 @@ pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
 /// Use ring as a crypto provider. aws_lc doesn't compile on illumos.
 ///
 /// Only allow X25519 for key exchange
-/// Only allow CHACHA_POLY1305_SHA256 for symmetric crypto; TODO: Should we instead
-/// use AES_256_GCM_SHA384, which is hw accelerated? Non-hw accelerated AES is vulnerable
-/// to timing attacks typically.
+///
+/// Only allow CHACHA_POLY1305_SHA256 for symmetric crypto
 pub fn crypto_provider() -> CryptoProvider {
     let mut crypto_provider = rustls::crypto::ring::default_provider();
     crypto_provider.kx_groups = vec![X25519];
@@ -121,8 +122,9 @@ impl LocalCertResolver {
         info!(self.log, "Successfully Loaded sprockets auth key");
 
         // Create a `SigningKey` using the private key
-        let signing_key = Arc::new(LocalEd25519SigningKey { privkey_der })
-            as Arc<dyn SigningKey>;
+        let signing_key = Arc::new(LocalEd25519SigningKey {
+            privkey_der: Secret::new(PrivkeyDer(privkey_der)),
+        }) as Arc<dyn SigningKey>;
 
         // Load the full cert chain as pemfiles and convert them to a chain
         // of DER buffers that can be used by rutsls.
@@ -200,7 +202,8 @@ impl LocalCertResolver {
 /// A mechanism for signing using an in memory Ed25519 private key
 #[derive(Debug)]
 pub(crate) struct LocalEd25519Signer {
-    // TODO: Wrap in a secret
+    // Not necessary to wrap in a `Secret`. It already prevents debug printing
+    // of the secret.
     key: ed25519_dalek::SigningKey,
 }
 
@@ -224,13 +227,18 @@ impl Signer for LocalEd25519Signer {
     }
 }
 
+/// A DER encoded private key
+#[derive(Debug, Zeroize, ZeroizeOnDrop)]
+pub struct PrivkeyDer(Vec<u8>);
+
+impl DebugSecret for PrivkeyDer {}
+
 /// An implementation of a an Ed25519 private signing key that lives in memory
 ///
 /// In production we'll send signing requests to the RoT via IPCC and sprot.
 #[derive(Debug)]
 pub(crate) struct LocalEd25519SigningKey {
-    // TODO: Wrap in a secret
-    privkey_der: Vec<u8>,
+    privkey_der: Secret<PrivkeyDer>,
 }
 
 impl SigningKey for LocalEd25519SigningKey {
@@ -242,8 +250,10 @@ impl SigningKey for LocalEd25519SigningKey {
             return None;
         }
 
-        let privkey_info =
-            PrivateKeyInfo::try_from(self.privkey_der.as_slice()).ok()?;
+        let privkey_info = PrivateKeyInfo::try_from(
+            self.privkey_der.expose_secret().0.as_slice(),
+        )
+        .ok()?;
 
         let signing_key =
             ed25519_dalek::SigningKey::try_from(privkey_info).ok()?;
