@@ -6,23 +6,16 @@
 
 use crate::load_root_cert;
 use camino::Utf8PathBuf;
-use rustls::crypto::ring::kx_group::X25519;
 use rustls::version::TLS13;
 use rustls::{
     server::{
         danger::{ClientCertVerified, ClientCertVerifier},
         ResolvesServerCert,
     },
-    sign::CertifiedKey,
     CipherSuite, ServerConfig, SignatureScheme,
 };
-use std::io::prelude::*;
-use std::iter;
-use std::{fs::File, sync::Arc};
-use x509_cert::{
-    der::{Decode, DecodePem},
-    Certificate,
-};
+use slog::error;
+use std::sync::Arc;
 
 use crate::{crypto_provider, LocalCertResolver, RotCertVerifier};
 
@@ -52,7 +45,7 @@ impl ResolvesServerCert for LocalCertResolver {
         match self.load_certified_key() {
             Ok(key) => Some(key),
             Err(e) => {
-                // TODO: Logging
+                error!(self.log, "failed to load certified key: {e}");
                 None
             }
         }
@@ -87,9 +80,9 @@ impl ClientCertVerifier for RotCertVerifier {
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
     {
         Err(rustls::Error::PeerIncompatible(
@@ -112,29 +105,24 @@ impl ClientCertVerifier for RotCertVerifier {
     }
 }
 
-#[derive(Debug)]
-pub struct Server {
-    pub config: ServerConfig,
-}
+/// Create a new [`ClientConfig`] for TLS
+pub fn new_tls_server_config(
+    root_keydir: &Utf8PathBuf,
+    resolver: Arc<dyn ResolvesServerCert>,
+    log: slog::Logger,
+) -> anyhow::Result<ServerConfig> {
+    let root = load_root_cert(&root_keydir)?;
 
-impl Server {
-    pub fn new(
-        root_keydir: &Utf8PathBuf,
-        resolver: Arc<dyn ResolvesServerCert>,
-    ) -> anyhow::Result<Server> {
-        let root = load_root_cert(&root_keydir)?;
+    // Create a verifier that is capable of verifying the cert chain of the
+    // server and any signed transcripts.
+    let verifier = Arc::new(RotCertVerifier::new(root, log)?)
+        as Arc<dyn ClientCertVerifier>;
 
-        // Create a verifier that is capable of verifying the cert chain of the
-        // server and any signed transcripts.
-        let verifier = Arc::new(RotCertVerifier::new(root)?)
-            as Arc<dyn ClientCertVerifier>;
+    let config =
+        ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
+            .with_protocol_versions(&[&TLS13])?
+            .with_client_cert_verifier(verifier)
+            .with_cert_resolver(resolver);
 
-        let config =
-            ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
-                .with_protocol_versions(&[&TLS13])?
-                .with_client_cert_verifier(verifier)
-                .with_cert_resolver(resolver);
-
-        Ok(Server { config })
-    }
+    Ok(config)
 }

@@ -16,6 +16,7 @@ use rustls::{
     SignatureScheme,
 };
 use sha2::{Digest, Sha512};
+use slog::{error, info};
 use std::io::prelude::*;
 use std::iter;
 use std::{fs::File, sync::Arc};
@@ -27,6 +28,9 @@ use x509_cert::{
 mod client;
 mod server;
 
+pub use client::new_tls_client_config;
+pub use server::new_tls_server_config;
+
 // These are on device keys and certs that differ for each node
 //
 // In production, we won't use files to load them but will retrieve them from
@@ -34,9 +38,7 @@ mod server;
 const SPROCKETS_AUTH_CERT_FILENAME: &'static str = "sprockets-auth.cert.pem";
 const SPROCKETS_AUTH_KEY_FILENAME: &'static str = "sprockets-auth.key.pem";
 const DEVICE_ID_CERT_FILENAME: &'static str = "deviceid.cert.pem";
-const DEVICE_ID_KEY_FILENAME: &'static str = "deviceid.key.pem";
 const PLATFORM_ID_CERT_FILENAME: &'static str = "platformid.cert.pem";
-const PLATFORM_ID_KEY_FILENAME: &'static str = "platformid.key.pem";
 
 /// These certs are shared across different nodes and used for PKI cert chain
 /// validation.
@@ -81,23 +83,27 @@ pub fn crypto_provider() -> CryptoProvider {
 /// We use hardcoded filenames for simplicity, since we have to build specific
 /// cert chains
 #[derive(Debug)]
-pub(crate) struct LocalCertResolver {
+pub struct LocalCertResolver {
     /// Directory containing public key certs for the root and intermediate
     /// online signing key.
     pki_keydir: Utf8PathBuf,
 
     /// Directory containing "on-device" certs and private keys
     node_keydir: Utf8PathBuf,
+
+    log: slog::Logger,
 }
 
 impl LocalCertResolver {
     pub fn new(
         pki_keydir: Utf8PathBuf,
         node_keydir: Utf8PathBuf,
+        log: slog::Logger,
     ) -> LocalCertResolver {
         LocalCertResolver {
             pki_keydir,
             node_keydir,
+            log,
         }
     }
 }
@@ -110,9 +116,9 @@ impl LocalCertResolver {
         let mut path = self.node_keydir.clone();
         path.push(SPROCKETS_AUTH_KEY_FILENAME);
         File::open(&path)?.read_to_end(&mut privkey_pem)?;
-
         let (type_label, privkey_der) = pem_rfc7468::decode_vec(&privkey_pem)?;
         assert_eq!(type_label, "PRIVATE KEY");
+        info!(self.log, "Successfully Loaded sprockets auth key");
 
         // Create a `SigningKey` using the private key
         let signing_key = Arc::new(LocalEd25519SigningKey { privkey_der })
@@ -135,6 +141,7 @@ impl LocalCertResolver {
         let (type_label, oks_signer_der) =
             pem_rfc7468::decode_vec(&oks_signer_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
+        info!(self.log, "Successfully Loaded OKS signing cert");
 
         // A unique id set at manufacturing time for each device
         //
@@ -147,6 +154,7 @@ impl LocalCertResolver {
         let (type_label, platformid_der) =
             pem_rfc7468::decode_vec(&platformid_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
+        info!(self.log, "Successfully Loaded platform id cert");
 
         // Device ID Cert
         //
@@ -159,6 +167,7 @@ impl LocalCertResolver {
         let (type_label, deviceid_der) =
             pem_rfc7468::decode_vec(&deviceid_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
+        info!(self.log, "Successfully Loaded device id cert");
 
         // The sprockets TLS auth cert
         //
@@ -170,6 +179,10 @@ impl LocalCertResolver {
         let (type_label, sprockets_auth_der) =
             pem_rfc7468::decode_vec(&sprockets_auth_pem)?;
         assert_eq!(type_label, "CERTIFICATE");
+        info!(
+            self.log,
+            "Successfully Loaded sprockets auth (end entity) cert"
+        );
 
         Ok(Arc::new(CertifiedKey::new(
             // The end-entity cert must come first, so put the chain in reverse order.
@@ -248,12 +261,13 @@ impl SigningKey for LocalEd25519SigningKey {
 #[derive(Debug)]
 struct RotCertVerifier {
     verifier: PkiPathSignatureVerifier,
+    log: slog::Logger,
 }
 
 impl RotCertVerifier {
-    pub fn new(root: Certificate) -> anyhow::Result<Self> {
+    pub fn new(root: Certificate, log: slog::Logger) -> anyhow::Result<Self> {
         let verifier = PkiPathSignatureVerifier::new(Some(root))?;
-        Ok(RotCertVerifier { verifier })
+        Ok(RotCertVerifier { verifier, log })
     }
 
     /// Create a `PkiPath` suitable for `dice-verifier`
@@ -280,11 +294,13 @@ impl RotCertVerifier {
     ) -> Result<(), rustls::Error> {
         let pki_path = Self::pki_path(end_entity, intermediates)?;
         self.verifier.verify(&pki_path).map_err(|e| {
-            println!("err = {e}");
+            error!(self.log, "Failed to verify cert: {e}");
             rustls::Error::InvalidCertificate(
                 rustls::CertificateError::BadEncoding,
             )
         })?;
+
+        info!(self.log, "Certificate chain verified successfully");
 
         Ok(())
     }
@@ -345,6 +361,8 @@ impl RotCertVerifier {
                 )
             })?;
 
+        info!(self.log, "Signature verified successfully");
+
         Ok(HandshakeSignatureValid::assertion())
     }
 }
@@ -352,15 +370,20 @@ impl RotCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::Client;
     use rustls::client::ResolvesClientCert;
     use rustls::server::ResolvesServerCert;
-    use server::Server;
+    use slog::Drain;
     use std::{
         io::ErrorKind,
         net::{TcpListener, TcpStream},
-        time,
     };
+
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+        slog::Logger::root(drain, slog::o!("component" => "sprockets"))
+    }
 
     #[test]
     fn basic() {
@@ -370,6 +393,7 @@ mod tests {
         client_node_keydir.push("sled1");
         let mut server_node_keydir = pki_keydir.clone();
         server_node_keydir.push("sled2");
+        let log = logger();
 
         // Create a resolver that can return the cert chain for this client so
         // the server can authenticate it, along with a mechanism for signing
@@ -377,6 +401,7 @@ mod tests {
         let client_resolver = Arc::new(LocalCertResolver::new(
             pki_keydir.clone(),
             client_node_keydir,
+            log.clone(),
         )) as Arc<dyn ResolvesClientCert>;
 
         // Create a resolver that can return the cert chain for this server so
@@ -385,13 +410,17 @@ mod tests {
         let server_resolver = Arc::new(LocalCertResolver::new(
             pki_keydir.clone(),
             server_node_keydir,
+            log.clone(),
         )) as Arc<dyn ResolvesServerCert>;
 
-        // Create our client
-        let client = Client::new(&pki_keydir, client_resolver).unwrap();
+        // Create our client config
+        let client_config =
+            new_tls_client_config(&pki_keydir, client_resolver, log.clone())
+                .unwrap();
 
-        // Create our server
-        let server = Server::new(&pki_keydir, server_resolver).unwrap();
+        // Create our server config
+        let server_config =
+            new_tls_server_config(&pki_keydir, server_resolver, log).unwrap();
 
         // Message to send over TLS
         const MSG: &[u8] = b"Hello Joe";
@@ -403,8 +432,7 @@ mod tests {
             let listener = TcpListener::bind("[::1]:46456").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let mut conn =
-                rustls::ServerConnection::new(Arc::new(server.config.clone()))
-                    .unwrap();
+                rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
             conn.complete_io(&mut stream).unwrap();
 
             let mut total_len = 0;
@@ -429,6 +457,8 @@ mod tests {
                 }
             }
             assert_eq!(&buf[..total_len], MSG);
+            let s = std::str::from_utf8(&buf[..total_len]).unwrap();
+            println!("msg = {}", s);
 
             // Inform the other thread that the test is complete.
             let _ = done_tx.send(());
@@ -436,7 +466,7 @@ mod tests {
 
         // Our cert resolver and verifier currently ignore the hostname
         let mut conn = rustls::ClientConnection::new(
-            Arc::new(client.config.clone()),
+            Arc::new(client_config),
             "example.com".try_into().unwrap(),
         )
         .unwrap();
