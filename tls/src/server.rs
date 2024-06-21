@@ -38,9 +38,10 @@ impl ResolvesServerCert for LocalCertResolver {
             return None;
         }
 
-        // We only want to allow TLS13_CHACHA20_POLY1305_SHA256 from the client,
-        // but rustls automatically inserts `TLS_EMPTY_RENEGOTIATION_INFO_SCSV`
-        // into the `ClientHello`.
+        // We only want to allow `TLS13_CHACHA20_POLY1305_SHA256`
+        // from the client, but rustls automatically inserts
+        // `TLS_EMPTY_RENEGOTIATION_INFO_SCSV` into the `ClientHello`. Therefore
+        // we filter before checking for our desired algorithm.
         if !client_hello
             .cipher_suites()
             .iter()

@@ -64,11 +64,11 @@ pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
 ///
-/// Use ring as a crypto provider. aws_lc doesn't compile on illumos.
+/// Use `ring` as a crypto provider. `aws_lc` doesn't compile on illumos.
 ///
 /// Only allow X25519 for key exchange
 ///
-/// Only allow CHACHA_POLY1305_SHA256 for symmetric crypto
+/// Only allow CHACHA20_POLY1305_SHA256 for symmetric crypto
 pub fn crypto_provider() -> CryptoProvider {
     let mut crypto_provider = rustls::crypto::ring::default_provider();
     crypto_provider.kx_groups = vec![X25519];
