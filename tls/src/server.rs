@@ -30,15 +30,28 @@ impl ResolvesServerCert for LocalCertResolver {
             .iter()
             .all(|&s| s == SignatureScheme::ED25519)
         {
+            error!(
+                self.log,
+                "Invalid signature scheme(s) in client hello message: {:?}",
+                client_hello.signature_schemes()
+            );
             return None;
         }
 
-        // We only support ChaCha20Poly1305 with SHA-256 and we control both sides of the connection
+        // We only want to allow TLS13_CHACHA20_POLY1305_SHA256 from the client,
+        // but rustls automatically inserts `TLS_EMPTY_RENEGOTIATION_INFO_SCSV`
+        // into the `ClientHello`.
         if !client_hello
             .cipher_suites()
             .iter()
-            .any(|&s| s == CipherSuite::TLS13_CHACHA20_POLY1305_SHA256)
+            .filter(|&&s| s != CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV)
+            .all(|&s| s == CipherSuite::TLS13_CHACHA20_POLY1305_SHA256)
         {
+            error!(
+                self.log,
+                "Invalid cipher suite(s) in client hello message: {:?}",
+                client_hello.cipher_suites()
+            );
             return None;
         }
 

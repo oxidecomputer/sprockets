@@ -32,7 +32,11 @@ impl ResolvesClientCert for LocalCertResolver {
         // TODO: Do we need to use `_root_hint_subjects`?
 
         // We only support Ed25519
-        if !sigschemes.iter().any(|&s| s == SignatureScheme::ED25519) {
+        if !sigschemes.iter().all(|&s| s == SignatureScheme::ED25519) {
+            error!(
+                self.log,
+                "Invalid signature schemes requested: {:?}", sigschemes
+            );
             return None;
         }
         match self.load_certified_key() {
