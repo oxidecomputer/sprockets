@@ -104,7 +104,7 @@ pub fn new_tls_client_config(
     resolver: Arc<dyn ResolvesClientCert>,
     log: slog::Logger,
 ) -> anyhow::Result<ClientConfig> {
-    let root = load_root_cert(&root_keydir)?;
+    let root = load_root_cert(root_keydir)?;
 
     // Create a verifier that is capable of verifying the cert chain of the
     // server and any signed transcripts.

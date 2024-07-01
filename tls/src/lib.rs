@@ -37,15 +37,15 @@ pub use server::new_tls_server_config;
 //
 // In production, we won't use files to load them but will retrieve them from
 // the RoT over IPCC.
-const SPROCKETS_AUTH_CERT_FILENAME: &'static str = "sprockets-auth.cert.pem";
-const SPROCKETS_AUTH_KEY_FILENAME: &'static str = "sprockets-auth.key.pem";
-const DEVICE_ID_CERT_FILENAME: &'static str = "deviceid.cert.pem";
-const PLATFORM_ID_CERT_FILENAME: &'static str = "platformid.cert.pem";
+const SPROCKETS_AUTH_CERT_FILENAME: &str = "sprockets-auth.cert.pem";
+const SPROCKETS_AUTH_KEY_FILENAME: &str = "sprockets-auth.key.pem";
+const DEVICE_ID_CERT_FILENAME: &str = "deviceid.cert.pem";
+const PLATFORM_ID_CERT_FILENAME: &str = "platformid.cert.pem";
 
 /// These certs are shared across different nodes and used for PKI cert chain
 /// validation.
-const OKS_SIGNER_CERT_FILENAME: &'static str = "oks-signer.cert.pem";
-pub(crate) const ROOT_CERT_FILENAME: &'static str = "root.cert.pem";
+const OKS_SIGNER_CERT_FILENAME: &str = "oks-signer.cert.pem";
+pub(crate) const ROOT_CERT_FILENAME: &str = "root.cert.pem";
 
 // A context for TLS signing
 //
