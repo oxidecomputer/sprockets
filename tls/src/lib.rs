@@ -23,7 +23,10 @@ use std::io::prelude::*;
 use std::io::IoSlice;
 use std::iter;
 use std::marker::Unpin;
+
+#[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::{AsRawFd, RawFd};
+
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::{fs::File, sync::Arc};
@@ -85,6 +88,7 @@ impl<T> Stream<T> {
     }
 }
 
+#[cfg(any(unix, target_os = "wasi"))]
 impl<T: AsRawFd> AsRawFd for Stream<T> {
     fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
