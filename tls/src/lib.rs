@@ -20,10 +20,17 @@ use secrecy::{DebugSecret, ExposeSecret, Secret};
 use sha2::{Digest, Sha512};
 use slog::{error, info};
 use std::io::prelude::*;
+use std::io::IoSlice;
 use std::iter;
+use std::marker::Unpin;
+use std::os::fd::{AsRawFd, RawFd};
+use std::pin::Pin;
+use std::task::{self, Poll};
 use std::{fs::File, sync::Arc};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_rustls::TlsStream;
 use x509_cert::{
-    der::{Decode, DecodePem},
+    der::{self, Decode, DecodePem},
     Certificate,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -31,8 +38,114 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 mod client;
 mod server;
 
-pub use client::new_tls_client_config;
-pub use server::new_tls_server_config;
+pub use client::{new_tls_client_config, Client, SprocketsClientConfig};
+pub use server::{new_tls_server_config, Server, SprocketsServerConfig};
+
+/// The top-level sprockets error type
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("rustls error: {0}")]
+    Rustls(#[from] rustls::Error),
+
+    #[error("der error: {0}")]
+    Der(#[from] der::Error),
+
+    #[error("pem error: {0}")]
+    Pem(#[from] pem_rfc7468::Error),
+
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
+    // TODO: Return a more specific error / errors from dice-util
+    #[error("dice error: {0}")]
+    Dice(#[from] anyhow::Error),
+}
+
+/// A type representing an established sprockets connection.
+///
+/// Users can send and recieve directly over this stream.
+///
+/// By the time a `Stream` is returned:
+///    * A TCP stream has been established
+///    * A mutual TLS session has been established over that TCP stream
+///    * Each side has successfully attested to the other side's measurements
+///      over the TLS session.
+pub struct Stream<T> {
+    inner: TlsStream<T>,
+}
+
+impl<T> Stream<T> {
+    pub fn new(tls_stream: TlsStream<T>) -> Stream<T> {
+        Stream { inner: tls_stream }
+    }
+
+    // Return the raw tls stream.
+    pub fn inner(&mut self) -> &mut TlsStream<T> {
+        &mut self.inner
+    }
+}
+
+impl<T: AsRawFd> AsRawFd for Stream<T> {
+    fn as_raw_fd(&self) -> RawFd {
+        self.inner.as_raw_fd()
+    }
+}
+impl<T> AsyncRead for Stream<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut pinned = std::pin::pin!(&mut self.get_mut().inner);
+        pinned.as_mut().poll_read(cx, buf)
+    }
+}
+
+impl<T> AsyncWrite for Stream<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut pinned = std::pin::pin!(&mut self.get_mut().inner);
+        pinned.as_mut().poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut pinned = std::pin::pin!(&mut self.get_mut().inner);
+        pinned.as_mut().poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut pinned = std::pin::pin!(&mut self.get_mut().inner);
+        pinned.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut pinned = std::pin::pin!(&mut self.get_mut().inner);
+        pinned.as_mut().poll_shutdown(cx)
+    }
+}
 
 // These are on device keys and certs that differ for each node
 //
@@ -54,7 +167,7 @@ pub(crate) const ROOT_CERT_FILENAME: &str = "root.cert.pem";
 const TLS_SIGNING_CONTEXT: &[u8] = b"sprockets-tls-signing";
 
 /// Load a root certificate from a given path
-pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
+pub fn load_root_cert(keydir: &Utf8PathBuf) -> Result<Certificate, Error> {
     let mut root_cert_path = keydir.clone();
     root_cert_path.push(ROOT_CERT_FILENAME);
     let mut root_cert_pem = Vec::new();
@@ -292,7 +405,7 @@ struct RotCertVerifier {
 }
 
 impl RotCertVerifier {
-    pub fn new(root: Certificate, log: slog::Logger) -> anyhow::Result<Self> {
+    pub fn new(root: Certificate, log: slog::Logger) -> Result<Self, Error> {
         let verifier = PkiPathSignatureVerifier::new(Some(root))?;
         Ok(RotCertVerifier { verifier, log })
     }
@@ -402,10 +515,9 @@ mod tests {
     use rustls::client::ResolvesClientCert;
     use rustls::server::ResolvesServerCert;
     use slog::Drain;
-    use std::{
-        io::ErrorKind,
-        net::{TcpListener, TcpStream},
-    };
+    use std::net::SocketAddrV6;
+    use std::str::FromStr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     pub fn logger() -> slog::Logger {
         let decorator = slog_term::TermDecorator::new().build();
@@ -414,8 +526,8 @@ mod tests {
         slog::Logger::root(drain, slog::o!("component" => "sprockets"))
     }
 
-    #[test]
-    fn basic() {
+    #[tokio::test]
+    async fn basic() {
         let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pki_keydir.push("test-keys");
         let mut client_node_keydir = pki_keydir.clone();
@@ -442,75 +554,53 @@ mod tests {
             log.clone(),
         )) as Arc<dyn ResolvesServerCert>;
 
-        // Create our client config
-        let client_config =
-            new_tls_client_config(&pki_keydir, client_resolver, log.clone())
-                .unwrap();
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
 
-        // Create our server config
-        let server_config =
-            new_tls_server_config(&pki_keydir, server_resolver, log).unwrap();
+        let client_config = SprocketsClientConfig {
+            pki_keydir: pki_keydir.clone(),
+            resolver: client_resolver,
+            addr: addr.clone(),
+        };
+
+        let server_config = SprocketsServerConfig {
+            pki_keydir: pki_keydir.clone(),
+            resolver: server_resolver,
+            listen_addr: addr,
+        };
 
         // Message to send over TLS
-        const MSG: &[u8] = b"Hello Joe";
+        const MSG: &str = "Hello Joe";
 
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let log2 = log.clone();
 
-        // Accept a single connection and do some TLS
-        std::thread::spawn(move || {
-            let listener = TcpListener::bind("[::1]:46456").unwrap();
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut conn =
-                rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
-            conn.complete_io(&mut stream).unwrap();
+        tokio::spawn(async move {
+            let mut server =
+                Server::listen(server_config, log.clone()).await.unwrap();
+            let mut stream = server.accept().await.unwrap();
 
-            let mut total_len = 0;
-            let mut buf = [0u8; 1024];
-            loop {
-                match conn.reader().read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(len) => {
-                        total_len += len;
-                        if total_len >= MSG.len() {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        if let ErrorKind::WouldBlock = e.kind() {
-                            conn.complete_io(&mut stream).unwrap();
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            assert_eq!(&buf[..total_len], MSG);
-            let s = std::str::from_utf8(&buf[..total_len]).unwrap();
-            println!("msg = {}", s);
+            let mut buf = String::new();
+            stream.read_to_string(&mut buf).await.unwrap();
 
-            // Inform the other thread that the test is complete.
+            assert_eq!(buf.as_str(), MSG);
+
+            // Inform the main task that the test is complete.
             let _ = done_tx.send(());
         });
 
-        // Our cert resolver and verifier currently ignore the hostname
-        let mut conn = rustls::ClientConnection::new(
-            Arc::new(client_config),
-            "example.com".try_into().unwrap(),
-        )
-        .unwrap();
-
         // Loop until we succesfully connect
-        let mut sock = loop {
-            if let Ok(sock) = TcpStream::connect("[::1]:46456") {
-                break sock;
+        let mut stream = loop {
+            if let Ok(stream) =
+                Client::connect(client_config.clone(), log2.clone()).await
+            {
+                break stream;
             }
         };
-        let mut tls = rustls::Stream::new(&mut conn, &mut sock);
-        tls.write_all(&MSG).unwrap();
+        stream.write_all(MSG.as_bytes()).await.unwrap();
+        drop(stream);
 
         // Wait for the other side of the connection to receive and assert the
         // message
-        let _ = done_rx.recv();
+        let _ = done_rx.await;
     }
 }
