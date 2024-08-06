@@ -521,7 +521,9 @@ mod tests {
     use slog::Drain;
     use std::net::SocketAddrV6;
     use std::str::FromStr;
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::sleep;
 
     pub fn logger() -> slog::Logger {
         let decorator = slog_term::TermDecorator::new().build();
@@ -599,9 +601,14 @@ mod tests {
             {
                 break stream;
             }
+            sleep(Duration::from_millis(1)).await;
         };
+
         stream.write_all(MSG.as_bytes()).await.unwrap();
-        drop(stream);
+
+        // Trigger an EOF so that `read_to_string` in the acceptor task
+        // completes.
+        stream.shutdown().await.unwrap();
 
         // Wait for the other side of the connection to receive and assert the
         // message
