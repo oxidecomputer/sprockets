@@ -6,7 +6,7 @@ members = [
 default-members = [
     "tls",
 ]
-
+resolver = "2"
 [profile.dev]
 panic = "abort"
 
@@ -16,18 +16,25 @@ panic = "abort"
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 camino = { version = "1.1.7" }
-dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "d332e43d2269cc6a566892386be63fe6adf3052f" }
+attest-data = { git = "https://github.com/oxidecomputer/dice-util", branch = "attest_messages_tq"}
+clap = { version = "4", default-features = false, features = ["std", "derive", "default", "wrap_help"] }
+ciborium = "0.2.2"
+cfg-if = "1.0"
+dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", branch = "attest_messages_tq"}
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
+libipcc = { git = "https://github.com/oxidecomputer/libipcc", rev = "fdffa212373a8f92473ea5f411088912bf458d5f" }
 pem-rfc7468 = { version = "0.7.0"}
 rustls = { version = "0.23.10", default-features = false, features = ["std", "ring", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1", default-features = false }
 sha2 = "0.10"
+sha3 = "0.10"
 slog = "2.7.0"
 slog-async = "2.1"
 slog-term = "2.9.1"
 thiserror = "1.0.57"
-tokio = {version = "1.38.0", features = ["net", "macros", "rt", "io-util", "sync", "time"]}
+tokio = {version = "1.38.0", features = ["net", "macros", "rt-multi-thread", "io-util", "sync", "time", "io-std"]}
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["ring", "logging"] }
+uuid = { version = "1.10.0", features = ["serde", "v4"] }
 x509-cert = { version = "0.2.5" }
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] }

@@ -4,13 +4,16 @@
 
 //! A TLS based server
 
+use crate::keys::{CertResolver, ResolveSetting, RotCertVerifier};
+use crate::{crypto_provider, load_root_cert};
+use crate::{Error, Stream};
 use camino::Utf8PathBuf;
-use rustls::version::TLS13;
 use rustls::{
     server::{
         danger::{ClientCertVerified, ClientCertVerifier},
         ResolvesServerCert,
     },
+    version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
 use slog::error;
@@ -18,13 +21,9 @@ use std::net::SocketAddrV6;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
+use x509_cert::Certificate;
 
-use crate::{
-    crypto_provider, load_root_cert, Error, LocalCertResolver, RotCertVerifier,
-    Stream,
-};
-
-impl ResolvesServerCert for LocalCertResolver {
+impl ResolvesServerCert for CertResolver {
     fn resolve(
         &self,
         client_hello: rustls::server::ClientHello,
@@ -123,36 +122,68 @@ impl ClientCertVerifier for RotCertVerifier {
     }
 }
 
-/// Create a new [`ClientConfig`] for TLS
-pub fn new_tls_server_config(
-    root_keydir: &Utf8PathBuf,
-    resolver: Arc<dyn ResolvesServerCert>,
+pub fn new_tls_local_server_config(
+    priv_key: Utf8PathBuf,
+    cert_chain: Utf8PathBuf,
+    roots: Vec<Utf8PathBuf>,
     log: slog::Logger,
 ) -> Result<ServerConfig, Error> {
-    let root = load_root_cert(root_keydir)?;
+    let roots = roots
+        .into_iter()
+        .map(|x| load_root_cert(&x))
+        .collect::<Result<Vec<Certificate>, _>>()?;
 
-    // Create a verifier that is capable of verifying the cert chain of the
-    // server and any signed transcripts.
-    let verifier = Arc::new(RotCertVerifier::new(root, log)?)
+    let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
         as Arc<dyn ClientCertVerifier>;
+
+    let server_resolver = Arc::new(CertResolver::new(
+        log.clone(),
+        ResolveSetting::Local {
+            priv_key,
+            cert_chain,
+        },
+    )) as Arc<dyn ResolvesServerCert>;
 
     let config =
         ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
             .with_protocol_versions(&[&TLS13])?
             .with_client_cert_verifier(verifier)
-            .with_cert_resolver(resolver);
+            .with_cert_resolver(server_resolver);
 
     Ok(config)
 }
 
-/// This is the top-level configuration type for a sprockets client
+pub fn new_tls_ipcc_server_config(
+    roots: Vec<Utf8PathBuf>,
+    log: slog::Logger,
+) -> Result<ServerConfig, Error> {
+    let roots = roots
+        .into_iter()
+        .map(|x| load_root_cert(&x))
+        .collect::<Result<Vec<Certificate>, _>>()?;
+
+    let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
+        as Arc<dyn ClientCertVerifier>;
+
+    let server_resolver =
+        Arc::new(CertResolver::new(log.clone(), ResolveSetting::Ipcc))
+            as Arc<dyn ResolvesServerCert>;
+
+    let config =
+        ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
+            .with_protocol_versions(&[&TLS13])?
+            .with_client_cert_verifier(verifier)
+            .with_cert_resolver(server_resolver);
+
+    Ok(config)
+}
+
+#[derive(Clone)]
 pub struct SprocketsServerConfig {
-    pub pki_keydir: Utf8PathBuf,
-    pub resolver: Arc<dyn ResolvesServerCert>,
+    pub roots: Vec<Utf8PathBuf>,
+    pub priv_key: Utf8PathBuf,
+    pub cert_chain: Utf8PathBuf,
     pub listen_addr: SocketAddrV6,
-    // TODO: attestation related things such as:
-    // * The measurement corpus, or where to find it
-    // * How to verify measurements
 }
 
 pub struct Server {
@@ -163,17 +194,34 @@ pub struct Server {
 
 impl Server {
     /// Listen for TCP connections on `config.listen_addr`.
-    pub async fn listen(
+    pub async fn listen_via_ipcc(
         config: SprocketsServerConfig,
         log: slog::Logger,
     ) -> Result<Server, Error> {
-        let tls_config = new_tls_server_config(
-            &config.pki_keydir,
-            config.resolver,
+        let c = new_tls_ipcc_server_config(config.roots, log.clone())?;
+        Server::listen(c, config.listen_addr, log).await
+    }
+
+    pub async fn listen_via_local_certs(
+        config: SprocketsServerConfig,
+        log: slog::Logger,
+    ) -> Result<Server, Error> {
+        let c = new_tls_local_server_config(
+            config.priv_key,
+            config.cert_chain,
+            config.roots,
             log.clone(),
         )?;
+        Server::listen(c, config.listen_addr, log).await
+    }
+
+    async fn listen(
+        tls_config: ServerConfig,
+        listen_addr: SocketAddrV6,
+        log: slog::Logger,
+    ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
-        let tcp_listener = TcpListener::bind(&config.listen_addr).await?;
+        let tcp_listener = TcpListener::bind(&listen_addr).await?;
         Ok(Server {
             _log: log,
             tcp_listener,
@@ -181,12 +229,14 @@ impl Server {
         })
     }
 
-    pub async fn accept(&mut self) -> Result<Stream<TcpStream>, Error> {
-        let (stream, _) = self.tcp_listener.accept().await?;
+    pub async fn accept(
+        &mut self,
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
+        let (stream, addr) = self.tcp_listener.accept().await?;
         let stream = self.tls_acceptor.clone().accept(stream).await?;
 
         // TODO: Measurement attestations
 
-        Ok(Stream::new(stream.into()))
+        Ok((Stream::new(stream.into()), addr))
     }
 }
