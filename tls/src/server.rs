@@ -4,7 +4,6 @@
 
 //! A TLS based server
 
-use crate::load_root_cert;
 use camino::Utf8PathBuf;
 use rustls::version::TLS13;
 use rustls::{
@@ -15,9 +14,15 @@ use rustls::{
     CipherSuite, ServerConfig, SignatureScheme,
 };
 use slog::error;
+use std::net::SocketAddrV6;
 use std::sync::Arc;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::TlsAcceptor;
 
-use crate::{crypto_provider, LocalCertResolver, RotCertVerifier};
+use crate::{
+    crypto_provider, load_root_cert, Error, LocalCertResolver, RotCertVerifier,
+    Stream,
+};
 
 impl ResolvesServerCert for LocalCertResolver {
     fn resolve(
@@ -123,7 +128,7 @@ pub fn new_tls_server_config(
     root_keydir: &Utf8PathBuf,
     resolver: Arc<dyn ResolvesServerCert>,
     log: slog::Logger,
-) -> anyhow::Result<ServerConfig> {
+) -> Result<ServerConfig, Error> {
     let root = load_root_cert(root_keydir)?;
 
     // Create a verifier that is capable of verifying the cert chain of the
@@ -138,4 +143,50 @@ pub fn new_tls_server_config(
             .with_cert_resolver(resolver);
 
     Ok(config)
+}
+
+/// This is the top-level configuration type for a sprockets client
+pub struct SprocketsServerConfig {
+    pub pki_keydir: Utf8PathBuf,
+    pub resolver: Arc<dyn ResolvesServerCert>,
+    pub listen_addr: SocketAddrV6,
+    // TODO: attestation related things such as:
+    // * The measurement corpus, or where to find it
+    // * How to verify measurements
+}
+
+pub struct Server {
+    _log: slog::Logger,
+    tcp_listener: TcpListener,
+    tls_acceptor: TlsAcceptor,
+}
+
+impl Server {
+    /// Listen for TCP connections on `config.listen_addr`.
+    pub async fn listen(
+        config: SprocketsServerConfig,
+        log: slog::Logger,
+    ) -> Result<Server, Error> {
+        let tls_config = new_tls_server_config(
+            &config.pki_keydir,
+            config.resolver,
+            log.clone(),
+        )?;
+        let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
+        let tcp_listener = TcpListener::bind(&config.listen_addr).await?;
+        Ok(Server {
+            _log: log,
+            tcp_listener,
+            tls_acceptor,
+        })
+    }
+
+    pub async fn accept(&mut self) -> Result<Stream<TcpStream>, Error> {
+        let (stream, _) = self.tcp_listener.accept().await?;
+        let stream = self.tls_acceptor.clone().accept(stream).await?;
+
+        // TODO: Measurement attestations
+
+        Ok(Stream::new(stream.into()))
+    }
 }
