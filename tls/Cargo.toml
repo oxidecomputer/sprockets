@@ -1,0 +1,19 @@
+[package]
+name = "tls"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+camino.workspace = true
+dice-verifier.workspace = true
+ed25519-dalek.workspace = true
+pem-rfc7468.workspace = true
+rustls.workspace = true
+secrecy.workspace = true
+sha2.workspace = true
+slog.workspace = true
+slog-async.workspace = true
+slog-term.workspace = true
+x509-cert.workspace = true
+zeroize.workspace = true
