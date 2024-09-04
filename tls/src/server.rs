@@ -76,7 +76,6 @@ impl ClientCertVerifier for RotCertVerifier {
     }
 
     fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
-        // TODO: Do we actually need to return anything here?
         &[]
     }
 

@@ -124,15 +124,8 @@ pub fn new_tls_client_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::logger;
     use rustls::pki_types::ServerName;
-    use slog::Drain;
-
-    fn logger() -> slog::Logger {
-        let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
-        let drain = slog_async::Async::new(drain).build().fuse();
-        slog::Logger::root(drain, slog::o!("component" => "sprockets"))
-    }
 
     #[test]
     // Ensure the test certs can be loaded and verified

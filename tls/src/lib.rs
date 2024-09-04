@@ -4,7 +4,8 @@
 
 //! TLS based connections
 
-use camino::Utf8PathBuf;
+use anyhow::{bail, Context};
+use camino::{Utf8Path, Utf8PathBuf};
 use dice_verifier::PkiPathSignatureVerifier;
 use ed25519_dalek::pkcs8::PrivateKeyInfo;
 use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
@@ -57,8 +58,13 @@ pub fn load_root_cert(keydir: &Utf8PathBuf) -> anyhow::Result<Certificate> {
     let mut root_cert_path = keydir.clone();
     root_cert_path.push(ROOT_CERT_FILENAME);
     let mut root_cert_pem = Vec::new();
-    File::open(&root_cert_path)?.read_to_end(&mut root_cert_pem)?;
-    let root = Certificate::from_pem(&root_cert_pem)?;
+    File::open(&root_cert_path)
+        .with_context(|| format!("failed to open {}", &root_cert_path))?
+        .read_to_end(&mut root_cert_pem)
+        .with_context(|| format!("failed to read {}", &root_cert_path))?;
+    let root = Certificate::from_pem(&root_cert_pem).with_context(|| {
+        format!("failed to convert pem read from {}", &root_cert_path)
+    })?;
     Ok(root)
 }
 
@@ -110,16 +116,43 @@ impl LocalCertResolver {
 }
 
 impl LocalCertResolver {
+    // Load a PEM cert file and decode it to DER along with its type label
+    fn load_and_decode(
+        &self,
+        path: &Utf8Path,
+        expected_label: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut pem = Vec::new();
+        File::open(&path)
+            .with_context(|| format!("failed to open {path}"))?
+            .read_to_end(&mut pem)
+            .with_context(|| format!("failed to read {path}"))?;
+        let (type_label, der) =
+            pem_rfc7468::decode_vec(&pem).with_context(|| {
+                format!("failed to decode pem to der for {path}")
+            })?;
+        if type_label != expected_label {
+            bail!(format!(
+                concat!(
+                    "File read from {} had improper label. ",
+                    "Expected: {}, Actual: {}"
+                ),
+                path, expected_label, type_label
+            ));
+        }
+
+        Ok(der)
+    }
     fn load_certified_key(&self) -> anyhow::Result<Arc<CertifiedKey>> {
         // Read the private key as a pemfile and convert it to DER that can be
         // used by rustls
-        let mut privkey_pem = Vec::new();
         let mut path = self.node_keydir.clone();
         path.push(SPROCKETS_AUTH_KEY_FILENAME);
-        File::open(&path)?.read_to_end(&mut privkey_pem)?;
-        let (type_label, privkey_der) = pem_rfc7468::decode_vec(&privkey_pem)?;
-        assert_eq!(type_label, "PRIVATE KEY");
-        info!(self.log, "Successfully Loaded sprockets auth key");
+        let privkey_der = self.load_and_decode(&path, "PRIVATE KEY")?;
+        info!(
+            self.log,
+            "Successfully loaded sprockets auth key from {path}"
+        );
 
         // Create a `SigningKey` using the private key
         let signing_key = Arc::new(LocalEd25519SigningKey {
@@ -136,54 +169,38 @@ impl LocalCertResolver {
         //
         // This is an intermediate signing cert from the Online Signing Service
         // It's used to sign the on device platformid certs.
-        let mut oks_signer_pem = Vec::new();
         let mut path = self.pki_keydir.clone();
         path.push(OKS_SIGNER_CERT_FILENAME);
-        File::open(&path)?.read_to_end(&mut oks_signer_pem)?;
-        let (type_label, oks_signer_der) =
-            pem_rfc7468::decode_vec(&oks_signer_pem)?;
-        assert_eq!(type_label, "CERTIFICATE");
-        info!(self.log, "Successfully Loaded OKS signing cert");
+        let oks_signer_der = self.load_and_decode(&path, "CERTIFICATE")?;
+        info!(self.log, "Successfully loaded OKS signing cert from {path}");
 
         // A unique id set at manufacturing time for each device
         //
         // This is an intermediate embedded signing cert used to sign deviceid
         // certs.
-        let mut platformid_pem = Vec::new();
         let mut path = self.node_keydir.clone();
         path.push(PLATFORM_ID_CERT_FILENAME);
-        File::open(&path)?.read_to_end(&mut platformid_pem)?;
-        let (type_label, platformid_der) =
-            pem_rfc7468::decode_vec(&platformid_pem)?;
-        assert_eq!(type_label, "CERTIFICATE");
-        info!(self.log, "Successfully Loaded platform id cert");
+        let platformid_der = self.load_and_decode(&path, "CERTIFICATE")?;
+        info!(self.log, "Successfully loaded platform id cert from {path}");
 
         // Device ID Cert
         //
         // This is the cert for an embedded CA used to sign measurement certs as
         // well as TLS authentication certs used in sprockets.
-        let mut deviceid_pem = Vec::new();
         let mut path = self.node_keydir.clone();
         path.push(DEVICE_ID_CERT_FILENAME);
-        File::open(&path)?.read_to_end(&mut deviceid_pem)?;
-        let (type_label, deviceid_der) =
-            pem_rfc7468::decode_vec(&deviceid_pem)?;
-        assert_eq!(type_label, "CERTIFICATE");
-        info!(self.log, "Successfully Loaded device id cert");
+        let deviceid_der = self.load_and_decode(&path, "CERTIFICATE")?;
+        info!(self.log, "Successfully loaded device id cert from {path}");
 
         // The sprockets TLS auth cert
         //
         // This is the end-entity cert that is used to authenticate the TLS session
-        let mut sprockets_auth_pem = Vec::new();
         let mut path = self.node_keydir.clone();
         path.push(SPROCKETS_AUTH_CERT_FILENAME);
-        File::open(&path)?.read_to_end(&mut sprockets_auth_pem)?;
-        let (type_label, sprockets_auth_der) =
-            pem_rfc7468::decode_vec(&sprockets_auth_pem)?;
-        assert_eq!(type_label, "CERTIFICATE");
+        let sprockets_auth_der = self.load_and_decode(&path, "CERTIFICATE")?;
         info!(
             self.log,
-            "Successfully Loaded sprockets auth (end entity) cert"
+            "Successfully loaded sprockets auth (end entity) cert from {path}"
         );
 
         Ok(Arc::new(CertifiedKey::new(
@@ -215,8 +232,8 @@ impl Signer for LocalEd25519Signer {
         let sig = self
             .key
             .sign_prehashed(prehashed, Some(TLS_SIGNING_CONTEXT))
-            .map_err(|_| {
-                rustls::Error::General("Failed to sign message".to_string())
+            .map_err(|e| {
+                rustls::Error::General(format!("Failed to sign message: {e}"))
             })?;
 
         Ok(sig.to_vec())
@@ -282,12 +299,14 @@ impl RotCertVerifier {
 
     /// Create a `PkiPath` suitable for `dice-verifier`
     fn pki_path(
+        &self,
         end_entity: &rustls::pki_types::CertificateDer<'_>,
         intermediates: &[rustls::pki_types::CertificateDer<'_>],
     ) -> Result<Vec<Certificate>, rustls::Error> {
         let mut pki_path = Vec::new();
         for der in iter::once(end_entity).chain(intermediates) {
-            pki_path.push(Certificate::from_der(der).map_err(|_| {
+            pki_path.push(Certificate::from_der(der).map_err(|e| {
+                error!(self.log, "failed to create a pki_path: {e}");
                 rustls::Error::InvalidCertificate(
                     rustls::CertificateError::BadEncoding,
                 )
@@ -302,7 +321,7 @@ impl RotCertVerifier {
         end_entity: &rustls::pki_types::CertificateDer<'_>,
         intermediates: &[rustls::pki_types::CertificateDer<'_>],
     ) -> Result<(), rustls::Error> {
-        let pki_path = Self::pki_path(end_entity, intermediates)?;
+        let pki_path = self.pki_path(end_entity, intermediates)?;
         self.verifier.verify(&pki_path).map_err(|e| {
             error!(self.log, "Failed to verify cert: {e}");
             rustls::Error::InvalidCertificate(
@@ -388,10 +407,10 @@ mod tests {
         net::{TcpListener, TcpStream},
     };
 
-    fn logger() -> slog::Logger {
+    pub fn logger() -> slog::Logger {
         let decorator = slog_term::TermDecorator::new().build();
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
-        let drain = slog_async::Async::new(drain).build().fuse();
+        let drain = std::sync::Mutex::new(drain).fuse();
         slog::Logger::root(drain, slog::o!("component" => "sprockets"))
     }
 
