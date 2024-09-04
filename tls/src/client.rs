@@ -5,6 +5,7 @@
 //! A TLS based client
 
 use camino::Utf8PathBuf;
+use rustls::pki_types::ServerName;
 use rustls::version::TLS13;
 use rustls::{
     client::{
@@ -17,10 +18,14 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
+use std::net::SocketAddrV6;
 use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 
 use crate::{
-    crypto_provider, load_root_cert, LocalCertResolver, RotCertVerifier,
+    crypto_provider, load_root_cert, Error, LocalCertResolver, RotCertVerifier,
+    Stream,
 };
 
 impl ResolvesClientCert for LocalCertResolver {
@@ -89,7 +94,7 @@ impl ServerCertVerifier for RotCertVerifier {
         message: &[u8],
         cert: &rustls::pki_types::CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
-    ) -> anyhow::Result<HandshakeSignatureValid, rustls::Error> {
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         self.verify_signature(message, cert, dss.signature())
     }
 
@@ -103,7 +108,7 @@ pub fn new_tls_client_config(
     root_keydir: &Utf8PathBuf,
     resolver: Arc<dyn ResolvesClientCert>,
     log: slog::Logger,
-) -> anyhow::Result<ClientConfig> {
+) -> Result<ClientConfig, Error> {
     let root = load_root_cert(root_keydir)?;
 
     // Create a verifier that is capable of verifying the cert chain of the
@@ -119,6 +124,45 @@ pub fn new_tls_client_config(
             .with_client_cert_resolver(resolver);
 
     Ok(config)
+}
+
+/// This is the top-level configuration type for a sprockets client
+#[derive(Clone)]
+pub struct SprocketsClientConfig {
+    pub pki_keydir: Utf8PathBuf,
+    pub resolver: Arc<dyn ResolvesClientCert>,
+    pub addr: SocketAddrV6,
+    // TODO: attestation related things such as:
+    // * The measurement corpus, or where to find it
+    // * How to verify measurements
+}
+
+/// The top-level sprockets client
+pub struct Client {}
+
+impl Client {
+    /// Connect to a remote peer
+    pub async fn connect(
+        config: SprocketsClientConfig,
+        log: slog::Logger,
+    ) -> Result<Stream<TcpStream>, Error> {
+        let tls_config =
+            new_tls_client_config(&config.pki_keydir, config.resolver, log)?;
+        // Nodes on the bootstrap network don't have DNS names. We don't
+        // actually ever know who we are connecting to on the bootstrap
+        // network, as we just learned of potential peers by IPv6 address from
+        // DDMD. We learn the identities of peers from the subject name in the
+        // certificate. Because of this we always pass a dummy DNS name, and
+        // ignore it when validating the connection on the server side.
+        let dnsname = ServerName::try_from("unknown.com").unwrap();
+        let connector = TlsConnector::from(Arc::new(tls_config));
+        let stream = TcpStream::connect(config.addr).await?;
+        let stream = connector.connect(dnsname, stream).await?;
+
+        // TODO: Measurement Attestations
+
+        Ok(Stream::new(stream.into()))
+    }
 }
 
 #[cfg(test)]
