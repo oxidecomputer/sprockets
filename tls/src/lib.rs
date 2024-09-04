@@ -123,7 +123,7 @@ impl LocalCertResolver {
         expected_label: &str,
     ) -> anyhow::Result<Vec<u8>> {
         let mut pem = Vec::new();
-        File::open(&path)
+        File::open(path)
             .with_context(|| format!("failed to open {path}"))?
             .read_to_end(&mut pem)
             .with_context(|| format!("failed to read {path}"))?;
