@@ -1,8 +1,0 @@
-To run this fuzz target, install [cargo
-fuzz](https://github.com/rust-fuzz/cargo-fuzz) and run
-
-```
-cargo +nightly fuzz run session-async-readwrite
-```
-
-from the parent directory.
