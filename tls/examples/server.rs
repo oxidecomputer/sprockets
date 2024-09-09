@@ -1,10 +1,14 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! Example IPCC server that echos back whatever was sent
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
 use sprockets_tls::server::{Server, SprocketsServerConfig};
 use std::net::SocketAddrV6;
 use std::str::FromStr;
-/// Example IPCC server that echos back whatever was sent
 use tokio::io::{copy, split, AsyncWriteExt};
 
 #[derive(Debug, Parser)]

@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! Requests over IPCC (Inter Processor Communication Channel)
 use attest_data::messages::{HostToRotCommand, HostToRotError, RotToHost};
 use libipcc::{IpccError, IpccHandle};
 use thiserror::Error;
@@ -13,6 +18,8 @@ pub enum RotRequestError {
     Ipcc(#[from] IpccError),
     #[error("Error from RotRequest call {0:?}")]
     RotRequest(HostToRotError),
+    #[error("Bad sign length")]
+    BadSignLen,
 }
 
 pub struct Ipcc {
@@ -47,6 +54,10 @@ impl Ipcc {
     }
 
     pub fn rot_tq_sign(&self, hash: &[u8]) -> Result<Vec<u8>, RotRequestError> {
+        // We expect this to be a sha3_256 hash == 32 bytes
+        if hash.len() != 32 {
+            return Err(RotRequestError::BadSignLen);
+        }
         let mut rot_message = vec![0; attest_data::messages::MAX_REQUEST_SIZE];
         let mut rot_resp = vec![0; IPCC_MAX_DATA_SIZE];
         let len = attest_data::messages::serialize(
