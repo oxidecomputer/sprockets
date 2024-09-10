@@ -23,6 +23,7 @@ use std::iter;
 
 use crate::ipcc::Ipcc;
 use crate::Error;
+use serde::Deserialize;
 use std::{fs::File, sync::Arc};
 use x509_cert::{
     der::{self, Decode, Encode, Reader},
@@ -30,7 +31,8 @@ use x509_cert::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "which", rename_all = "snake_case")]
 pub enum ResolveSetting {
     // Use certificates gathered over IPCC
     Ipcc,
@@ -375,4 +377,11 @@ impl RotCertVerifier {
 
         Ok(HandshakeSignatureValid::assertion())
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SprocketsConfig {
+    pub resolve: ResolveSetting,
+    pub roots: Vec<Utf8PathBuf>,
 }

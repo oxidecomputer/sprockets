@@ -24,5 +24,6 @@ slog-term.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
+toml.workspace = true
 x509-cert.workspace = true
 zeroize.workspace = true

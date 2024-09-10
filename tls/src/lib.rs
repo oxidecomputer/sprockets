@@ -193,6 +193,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn toml_config() {
+        let ipcc = r#"
+        resolve = {which = "ipcc"}
+        roots = ["/path/to/root1", "/path/to/root2"]
+        "#;
+
+        let _: keys::SprocketsConfig = toml::from_str(ipcc).unwrap();
+
+        let local = r#"
+        resolve = { which = "local", priv_key = "/path/to/priv.pem", cert_chain = "/path/to/chain.pem" }
+
+        roots = ["/path/to/root1"]
+        "#;
+
+        let _: keys::SprocketsConfig = toml::from_str(local).unwrap();
+    }
+
+    #[tokio::test]
     async fn basic() {
         let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pki_keydir.push("test-keys");
@@ -204,11 +222,12 @@ mod tests {
 
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
 
-        let server_config = server::SprocketsServerConfig {
+        let server_config = keys::SprocketsConfig {
             roots: vec![pki_keydir.join("root.cert.pem")],
-            priv_key: server_node_keydir.join("sprockets-auth.key.pem"),
-            cert_chain: pki_keydir.join("chain2.pem"),
-            listen_addr: addr,
+            resolve: keys::ResolveSetting::Local {
+                priv_key: server_node_keydir.join("sprockets-auth.key.pem"),
+                cert_chain: pki_keydir.join("chain2.pem"),
+            },
         };
 
         // Message to send over TLS
@@ -218,10 +237,9 @@ mod tests {
         let log2 = log.clone();
 
         tokio::spawn(async move {
-            let mut server =
-                Server::listen_via_local_certs(server_config, log2.clone())
-                    .await
-                    .unwrap();
+            let mut server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
             let (mut stream, _) = server.accept().await.unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
@@ -234,16 +252,16 @@ mod tests {
 
         // Loop until we succesfully connect
         let mut stream = loop {
-            let client_config = client::SprocketsClientConfig {
+            let client_config = keys::SprocketsConfig {
                 roots: vec![pki_keydir.join("root.cert.pem")],
-                priv_key: client_node_keydir.join("sprockets-auth.key.pem"),
-                cert_chain: pki_keydir.join("chain1.pem"),
-                addr,
+                resolve: keys::ResolveSetting::Local {
+                    priv_key: client_node_keydir.join("sprockets-auth.key.pem"),
+                    cert_chain: pki_keydir.join("chain1.pem"),
+                },
             };
 
             if let Ok(stream) =
-                Client::connect_via_local_certs(client_config, log.clone())
-                    .await
+                Client::new(client_config, addr, log.clone()).await
             {
                 break stream;
             }

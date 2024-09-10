@@ -6,21 +6,28 @@
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
-use sprockets_tls::server::{Server, SprocketsServerConfig};
+use sprockets_tls::keys::{ResolveSetting, SprocketsConfig};
+use sprockets_tls::server::Server;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
 
 #[derive(Debug, Parser)]
+enum Setting {
+    Ipcc,
+    Local {
+        priv_key: Utf8PathBuf,
+        cert_chain: Utf8PathBuf,
+    },
+}
+
+#[derive(Debug, Parser)]
 struct Args {
-    /// PkiPath
+    /// Root Certificates
     #[clap(long)]
-    root: Vec<Utf8PathBuf>,
-    #[clap(long, required = false)]
-    cert_chain: Utf8PathBuf,
-    /// Private key (local only)
-    #[clap(long, required = false)]
-    priv_key: Utf8PathBuf,
+    roots: Vec<Utf8PathBuf>,
+    #[clap(subcommand)]
+    resolve: Setting,
     /// Address and port to bind
     #[clap(long)]
     addr: String,
@@ -36,16 +43,27 @@ async fn main() {
 
     let args = Args::parse();
 
+    if args.roots.len() < 1 {
+        panic!("Must specify at least one root");
+    }
+
     let listen_addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    let server_config = SprocketsServerConfig {
-        roots: args.root,
-        priv_key: args.priv_key,
-        cert_chain: args.cert_chain,
-        listen_addr,
+    let server_config = SprocketsConfig {
+        roots: args.roots,
+        resolve: match args.resolve {
+            Setting::Ipcc => ResolveSetting::Ipcc,
+            Setting::Local {
+                priv_key,
+                cert_chain,
+            } => ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            },
+        },
     };
 
-    let mut server = Server::listen_via_local_certs(server_config, log.clone())
+    let mut server = Server::new(server_config, listen_addr, log.clone())
         .await
         .unwrap();
 

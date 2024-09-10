@@ -6,23 +6,29 @@
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::Drain;
-use sprockets_tls::client::{Client, SprocketsClientConfig};
+use sprockets_tls::client::Client;
+use sprockets_tls::keys::{ResolveSetting, SprocketsConfig};
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
 use tokio::io::{stdin as tokio_stdin, stdout as tokio_stdout};
 
 #[derive(Debug, Parser)]
+enum Setting {
+    Ipcc,
+    Local {
+        priv_key: Utf8PathBuf,
+        cert_chain: Utf8PathBuf,
+    },
+}
+
+#[derive(Debug, Parser)]
 struct Args {
     /// Root Certificates
     #[clap(long)]
-    root: Vec<Utf8PathBuf>,
-    /// Certificate chain (local only)
-    #[clap(long)]
-    cert_chain: Utf8PathBuf,
-    /// Private key (local only)
-    #[clap(long)]
-    priv_key: Utf8PathBuf,
+    roots: Vec<Utf8PathBuf>,
+    #[clap(subcommand)]
+    resolve: Setting,
     /// Address and port to bind
     #[clap(long)]
     addr: String,
@@ -38,18 +44,27 @@ async fn main() {
 
     let args = Args::parse();
 
-    let addr = SocketAddrV6::from_str(&args.addr).unwrap();
+    if args.roots.len() < 1 {
+        panic!("Need at least one root");
+    }
 
-    let client_config = SprocketsClientConfig {
-        roots: args.root,
-        priv_key: args.priv_key,
-        cert_chain: args.cert_chain,
-        addr,
+    let client_config = SprocketsConfig {
+        roots: args.roots,
+        resolve: match args.resolve {
+            Setting::Ipcc => ResolveSetting::Ipcc,
+            Setting::Local {
+                priv_key,
+                cert_chain,
+            } => ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            },
+        },
     };
 
-    let stream = Client::connect_via_local_certs(client_config, log.clone())
-        .await
-        .unwrap();
+    let addr = SocketAddrV6::from_str(&args.addr).unwrap();
+
+    let stream = Client::new(client_config, addr, log.clone()).await.unwrap();
 
     let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());
     let (mut reader, mut writer) = split(stream);
