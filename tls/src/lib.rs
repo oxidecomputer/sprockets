@@ -261,7 +261,7 @@ mod tests {
             };
 
             if let Ok(stream) =
-                Client::new(client_config, addr, log.clone()).await
+                Client::connect(client_config, addr, log.clone()).await
             {
                 break stream;
             }

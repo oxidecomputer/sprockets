@@ -108,7 +108,7 @@ impl ServerCertVerifier for RotCertVerifier {
 pub struct Client {}
 
 impl Client {
-    pub async fn new(
+    pub async fn connect(
         config: SprocketsConfig,
         addr: SocketAddrV6,
         log: slog::Logger,
@@ -127,7 +127,7 @@ impl Client {
                 Client::new_tls_ipcc_client_config(config.roots, log.clone())?
             }
         };
-        Client::connect(c, addr, log).await
+        Client::connect_with_config(c, addr, log).await
     }
 
     fn new_tls_local_client_config(
@@ -189,7 +189,7 @@ impl Client {
     }
 
     /// Connect to a remote peer
-    async fn connect(
+    async fn connect_with_config(
         tls_config: ClientConfig,
         addr: SocketAddrV6,
         _log: slog::Logger,
