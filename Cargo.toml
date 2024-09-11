@@ -16,11 +16,11 @@ panic = "abort"
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 camino = { version = "1.1.7", default-features = false, features = ["serde1"] }
-attest-data = { git = "https://github.com/oxidecomputer/dice-util", branch = "attest_messages_tq"}
+attest-data = { git = "https://github.com/oxidecomputer/dice-util", rev = "3cc953c8d0ace2f20cbcf3920b0771d25301960a" }
 clap = { version = "4", default-features = false, features = ["std", "derive", "default", "wrap_help"] }
 ciborium = "0.2.2"
 cfg-if = "1.0"
-dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", branch = "attest_messages_tq"}
+dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "3cc953c8d0ace2f20cbcf3920b0771d25301960a" }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/libipcc", rev = "fdffa212373a8f92473ea5f411088912bf458d5f" }
 pem-rfc7468 = { version = "0.7.0"}

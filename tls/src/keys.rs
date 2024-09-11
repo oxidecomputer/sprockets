@@ -61,11 +61,11 @@ impl CertResolver {
         let mut der_vec = vec![];
         // The cert chain returned is a concatenated series of DER certs.
         // rustls wants each cert as a member of a `Vec`. We don't know
-        // the length of each cert so we have to parse the DER to fid it.
+        // the length of each cert so we have to parse the DER to find it.
         //
         // Note we could just return the length of each cert but that
         // either invovles more IPCC calls or more work on the RoT/SP.
-        // This code runs on the Big Cpu so we can do the Big Work here.
+        // This code runs on the Big CPU so we can do the Big Work here.
         // A note for our certificate manufacturing v2 would be to just
         // include the length of each cert along with the DER
         while idx < cert_chain_bytes.len() {
