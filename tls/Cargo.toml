@@ -1,22 +1,29 @@
 [package]
-name = "tls"
+name = "sprockets-tls"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap.workspace = true
 anyhow.workspace = true
+attest-data.workspace = true
 camino.workspace = true
+cfg-if.workspace = true
 dice-verifier.workspace = true
+libipcc.workspace = true
 ed25519-dalek.workspace = true
 pem-rfc7468.workspace = true
 rustls.workspace = true
+serde.workspace = true
 secrecy.workspace = true
 sha2.workspace = true
+sha3.workspace = true
 slog.workspace = true
 slog-async.workspace = true
 slog-term.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
+toml.workspace = true
 x509-cert.workspace = true
 zeroize.workspace = true

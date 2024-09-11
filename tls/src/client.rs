@@ -4,9 +4,17 @@
 
 //! A TLS based client
 
-use camino::Utf8PathBuf;
 use rustls::pki_types::ServerName;
-use rustls::version::TLS13;
+use std::net::SocketAddrV6;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+
+use crate::keys::ResolveSetting;
+use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+use crate::{crypto_provider, load_root_cert};
+use crate::{Error, Stream};
+use camino::Utf8PathBuf;
 use rustls::{
     client::{
         danger::{
@@ -15,20 +23,13 @@ use rustls::{
         ResolvesClientCert,
     },
     sign::CertifiedKey,
+    version::TLS13,
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
-use std::net::SocketAddrV6;
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
+use x509_cert::Certificate;
 
-use crate::{
-    crypto_provider, load_root_cert, Error, LocalCertResolver, RotCertVerifier,
-    Stream,
-};
-
-impl ResolvesClientCert for LocalCertResolver {
+impl ResolvesClientCert for CertResolver {
     fn resolve(
         &self,
         _root_hint_subjects: &[&[u8]],
@@ -103,51 +104,96 @@ impl ServerCertVerifier for RotCertVerifier {
     }
 }
 
-/// Create a new [`ClientConfig`] for TLS
-pub fn new_tls_client_config(
-    root_keydir: &Utf8PathBuf,
-    resolver: Arc<dyn ResolvesClientCert>,
-    log: slog::Logger,
-) -> Result<ClientConfig, Error> {
-    let root = load_root_cert(root_keydir)?;
-
-    // Create a verifier that is capable of verifying the cert chain of the
-    // server and any signed transcripts.
-    let verifier = Arc::new(RotCertVerifier::new(root, log)?)
-        as Arc<dyn ServerCertVerifier>;
-
-    let config =
-        ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
-            .with_protocol_versions(&[&TLS13])?
-            .dangerous()
-            .with_custom_certificate_verifier(verifier)
-            .with_client_cert_resolver(resolver);
-
-    Ok(config)
-}
-
-/// This is the top-level configuration type for a sprockets client
-#[derive(Clone)]
-pub struct SprocketsClientConfig {
-    pub pki_keydir: Utf8PathBuf,
-    pub resolver: Arc<dyn ResolvesClientCert>,
-    pub addr: SocketAddrV6,
-    // TODO: attestation related things such as:
-    // * The measurement corpus, or where to find it
-    // * How to verify measurements
-}
-
 /// The top-level sprockets client
 pub struct Client {}
 
 impl Client {
-    /// Connect to a remote peer
     pub async fn connect(
-        config: SprocketsClientConfig,
+        config: SprocketsConfig,
+        addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Stream<TcpStream>, Error> {
-        let tls_config =
-            new_tls_client_config(&config.pki_keydir, config.resolver, log)?;
+        let c = match config.resolve {
+            ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            } => Client::new_tls_local_client_config(
+                priv_key,
+                cert_chain,
+                config.roots,
+                log.clone(),
+            )?,
+            ResolveSetting::Ipcc => {
+                Client::new_tls_ipcc_client_config(config.roots, log.clone())?
+            }
+        };
+        Client::connect_with_config(c, addr, log).await
+    }
+
+    fn new_tls_local_client_config(
+        priv_key: Utf8PathBuf,
+        cert_chain: Utf8PathBuf,
+        roots: Vec<Utf8PathBuf>,
+        log: slog::Logger,
+    ) -> Result<ClientConfig, Error> {
+        let roots = roots
+            .into_iter()
+            .map(|x| load_root_cert(&x))
+            .collect::<Result<Vec<Certificate>, _>>()?;
+
+        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
+            as Arc<dyn ServerCertVerifier>;
+
+        let client_resolver = Arc::new(CertResolver::new(
+            log.clone(),
+            ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            },
+        )) as Arc<dyn ResolvesClientCert>;
+
+        let config =
+            ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
+                .with_protocol_versions(&[&TLS13])?
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_client_cert_resolver(client_resolver);
+
+        Ok(config)
+    }
+
+    fn new_tls_ipcc_client_config(
+        roots: Vec<Utf8PathBuf>,
+        log: slog::Logger,
+    ) -> Result<ClientConfig, Error> {
+        let roots = roots
+            .into_iter()
+            .map(|x| load_root_cert(&x))
+            .collect::<Result<Vec<Certificate>, _>>()?;
+
+        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
+            as Arc<dyn ServerCertVerifier>;
+
+        let client_resolver =
+            Arc::new(CertResolver::new(log.clone(), ResolveSetting::Ipcc))
+                as Arc<dyn ResolvesClientCert>;
+
+        let config =
+            ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
+                .with_protocol_versions(&[&TLS13])?
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_client_cert_resolver(client_resolver);
+
+        Ok(config)
+    }
+
+    /// Connect to a remote peer
+    async fn connect_with_config(
+        tls_config: ClientConfig,
+        addr: SocketAddrV6,
+        _log: slog::Logger,
+    ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
         // network, as we just learned of potential peers by IPv6 address from
@@ -155,21 +201,33 @@ impl Client {
         // certificate. Because of this we always pass a dummy DNS name, and
         // ignore it when validating the connection on the server side.
         let dnsname = ServerName::try_from("unknown.com").unwrap();
+
         let connector = TlsConnector::from(Arc::new(tls_config));
-        let stream = TcpStream::connect(config.addr).await?;
+        let stream = match TcpStream::connect(addr).await {
+            Ok(s) => s,
+            Err(e) => {
+                println!("{:?}", e);
+                return Err(e.into());
+            }
+        };
+
         let stream = connector.connect(dnsname, stream).await?;
-
         // TODO: Measurement Attestations
-
         Ok(Stream::new(stream.into()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::keys::CertResolver;
+    use crate::keys::ResolveSetting;
+    use crate::keys::RotCertVerifier;
+    use crate::load_root_cert;
     use crate::tests::logger;
+    use camino::Utf8PathBuf;
+    use rustls::client::danger::ServerCertVerifier;
     use rustls::pki_types::ServerName;
+    use rustls::SignatureScheme;
 
     #[test]
     // Ensure the test certs can be loaded and verified
@@ -178,10 +236,15 @@ mod tests {
         pki_keydir.push("test-keys");
         let mut node_keydir = pki_keydir.clone();
         node_keydir.push("sled1");
-        let root = load_root_cert(&pki_keydir).unwrap();
-        let verifier = RotCertVerifier::new(root, logger()).unwrap();
-        let resolver =
-            LocalCertResolver::new(pki_keydir, node_keydir, logger());
+        let root = load_root_cert(&pki_keydir.join("root.cert.pem")).unwrap();
+        let verifier = RotCertVerifier::new(vec![root], logger()).unwrap();
+        let resolver = CertResolver::new(
+            logger(),
+            ResolveSetting::Local {
+                priv_key: node_keydir.join("sprockets-auth.key.pem"),
+                cert_chain: pki_keydir.join("chain1.pem"),
+            },
+        );
         let certified_key = resolver.load_certified_key().unwrap();
         let end_entity = certified_key.end_entity_cert().unwrap();
         let intermediates = &certified_key.cert[1..];
@@ -190,7 +253,7 @@ mod tests {
         // Verify that the cert chain is valid
         verifier
             .verify_server_cert(
-                &end_entity,
+                end_entity,
                 intermediates,
                 &server_name,
                 &[],
