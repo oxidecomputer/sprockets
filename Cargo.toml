@@ -22,7 +22,7 @@ ciborium = "0.2.2"
 cfg-if = "1.0"
 dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "3cc953c8d0ace2f20cbcf3920b0771d25301960a" }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
-libipcc = { git = "https://github.com/oxidecomputer/libipcc", rev = "fdffa212373a8f92473ea5f411088912bf458d5f" }
+libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
 rustls = { version = "0.23.10", default-features = false, features = ["std", "ring", "logging"] }
 secrecy = "0.8.0"
