@@ -128,6 +128,7 @@ pub struct Server {
     _log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
+    corpus: Vec<Utf8PathBuf>,
 }
 
 impl Server {
@@ -206,12 +207,13 @@ impl Server {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }
         };
-        Server::listen(c, addr, log).await
+        Server::listen(c, addr, config.corpus, log).await
     }
 
     async fn listen(
         tls_config: ServerConfig,
         listen_addr: SocketAddrV6,
+        corpus: Vec<Utf8PathBuf>,
         log: slog::Logger,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
@@ -220,6 +222,7 @@ impl Server {
             _log: log,
             tcp_listener,
             tls_acceptor,
+            corpus,
         })
     }
 
@@ -229,7 +232,16 @@ impl Server {
         let (stream, addr) = self.tcp_listener.accept().await?;
         let stream = self.tls_acceptor.clone().accept(stream).await?;
 
-        // TODO: Measurement attestations
+        Ok((Stream::new(stream.into()), addr))
+    }
+
+    pub async fn accept_measured(
+        &mut self,
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
+        let (stream, addr) = self.tcp_listener.accept().await?;
+        let stream = self.tls_acceptor.clone().accept(stream).await?;
+
+        crate::measurements::measure_from_corpus(&self.corpus)?;
 
         Ok((Stream::new(stream.into()), addr))
     }

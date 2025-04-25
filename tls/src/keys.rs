@@ -384,4 +384,5 @@ impl RotCertVerifier {
 pub struct SprocketsConfig {
     pub resolve: ResolveSetting,
     pub roots: Vec<Utf8PathBuf>,
+    pub corpus: Vec<Utf8PathBuf>,
 }

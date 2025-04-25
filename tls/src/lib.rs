@@ -30,6 +30,7 @@ use x509_cert::{
 pub mod client;
 pub mod ipcc;
 pub mod keys;
+pub mod measurements;
 pub mod server;
 
 pub use client::Client;
@@ -59,6 +60,9 @@ pub enum Error {
 
     #[error("Incorrect Private Key Format: {0}")]
     BadPrivateKey(String),
+
+    #[error("corim error: {0}")]
+    Corim(#[from] rats_corim::Error),
 }
 
 /// A type representing an established sprockets connection.

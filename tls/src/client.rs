@@ -130,6 +130,28 @@ impl Client {
         Client::connect_with_config(c, addr, log).await
     }
 
+    pub async fn connect_measured(
+        config: SprocketsConfig,
+        addr: SocketAddrV6,
+        log: slog::Logger,
+    ) -> Result<Stream<TcpStream>, Error> {
+        let c = match config.resolve {
+            ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            } => Client::new_tls_local_client_config(
+                priv_key,
+                cert_chain,
+                config.roots,
+                log.clone(),
+            )?,
+            ResolveSetting::Ipcc => {
+                Client::new_tls_ipcc_client_config(config.roots, log.clone())?
+            }
+        };
+        Client::connect_with_config_measured(c, addr, config.corpus, log).await
+    }
+
     fn new_tls_local_client_config(
         priv_key: Utf8PathBuf,
         cert_chain: Utf8PathBuf,
@@ -213,6 +235,37 @@ impl Client {
 
         let stream = connector.connect(dnsname, stream).await?;
         // TODO: Measurement Attestations
+        Ok(Stream::new(stream.into()))
+    }
+
+    /// Connect to a remote peer
+    async fn connect_with_config_measured(
+        tls_config: ClientConfig,
+        addr: SocketAddrV6,
+        corpus: Vec<Utf8PathBuf>,
+        _log: slog::Logger,
+    ) -> Result<Stream<TcpStream>, Error> {
+        // Nodes on the bootstrap network don't have DNS names. We don't
+        // actually ever know who we are connecting to on the bootstrap
+        // network, as we just learned of potential peers by IPv6 address from
+        // DDMD. We learn the identities of peers from the subject name in the
+        // certificate. Because of this we always pass a dummy DNS name, and
+        // ignore it when validating the connection on the server side.
+        let dnsname = ServerName::try_from("unknown.com").unwrap();
+
+        let connector = TlsConnector::from(Arc::new(tls_config));
+        let stream = match TcpStream::connect(addr).await {
+            Ok(s) => s,
+            Err(e) => {
+                println!("{:?}", e);
+                return Err(e.into());
+            }
+        };
+
+        let stream = connector.connect(dnsname, stream).await?;
+
+        crate::measurements::measure_from_corpus(&corpus)?;
+
         Ok(Stream::new(stream.into()))
     }
 }
