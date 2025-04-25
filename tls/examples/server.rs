@@ -61,6 +61,7 @@ async fn main() {
                 cert_chain,
             },
         },
+        corpus: vec![],
     };
 
     let mut server = Server::new(server_config, listen_addr, log.clone())

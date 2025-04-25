@@ -12,6 +12,7 @@ const-oid.workspace = true
 cfg-if.workspace = true
 der.workspace = true
 dice-verifier.workspace = true
+dice-mfg-msgs.workspace = true
 hubpack.workspace = true
 libipcc.workspace = true
 ed25519-dalek.workspace = true

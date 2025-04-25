@@ -60,6 +60,7 @@ async fn main() {
                 cert_chain,
             },
         },
+        corpus: vec![],
     };
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();

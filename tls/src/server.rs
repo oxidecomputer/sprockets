@@ -239,8 +239,26 @@ impl Server {
         &mut self,
     ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
         let (stream, addr) = self.tcp_listener.accept().await?;
+
         let stream = self.tls_acceptor.clone().accept(stream).await?;
 
+        let (_, state) = stream.get_ref();
+
+        use crate::measurements::FromPkiPath;
+        use der::Decode;
+        if let Some(certs) = state.peer_certificates() {
+            let mut chain = x509_cert::PkiPath::new();
+
+            for c in certs {
+                chain.push(Certificate::from_der(&c.as_ref()).unwrap());
+            }
+            let platform_id =
+                crate::measurements::PlatformId::from_pki_path(&chain).unwrap();
+            println!(
+                "Connection from peer {}",
+                platform_id.unwrap().as_str().unwrap()
+            );
+        }
         crate::measurements::measure_from_corpus(&self.corpus)?;
 
         Ok((Stream::new(stream.into()), addr))
