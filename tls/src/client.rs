@@ -133,6 +133,7 @@ impl Client {
     pub async fn connect_measured(
         config: SprocketsConfig,
         addr: SocketAddrV6,
+        corpus: &Vec<Utf8PathBuf>,
         log: slog::Logger,
     ) -> Result<Stream<TcpStream>, Error> {
         let c = match config.resolve {
@@ -149,7 +150,7 @@ impl Client {
                 Client::new_tls_ipcc_client_config(config.roots, log.clone())?
             }
         };
-        Client::connect_with_config_measured(c, addr, config.corpus, log).await
+        Client::connect_with_config_measured(c, addr, corpus, log).await
     }
 
     fn new_tls_local_client_config(
@@ -242,7 +243,7 @@ impl Client {
     async fn connect_with_config_measured(
         tls_config: ClientConfig,
         addr: SocketAddrV6,
-        corpus: Vec<Utf8PathBuf>,
+        corpus: &Vec<Utf8PathBuf>,
         _log: slog::Logger,
     ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
@@ -264,7 +265,7 @@ impl Client {
 
         let stream = connector.connect(dnsname, stream).await?;
 
-        crate::measurements::measure_from_corpus(&corpus)?;
+        crate::measurements::measure_from_corpus(corpus)?;
 
         Ok(Stream::new(stream.into()))
     }

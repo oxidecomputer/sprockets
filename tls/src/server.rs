@@ -128,7 +128,6 @@ pub struct Server {
     _log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
-    corpus: Vec<Utf8PathBuf>,
 }
 
 impl Server {
@@ -207,13 +206,12 @@ impl Server {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }
         };
-        Server::listen(c, addr, config.corpus, log).await
+        Server::listen(c, addr, log).await
     }
 
     async fn listen(
         tls_config: ServerConfig,
         listen_addr: SocketAddrV6,
-        corpus: Vec<Utf8PathBuf>,
         log: slog::Logger,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
@@ -222,7 +220,6 @@ impl Server {
             _log: log,
             tcp_listener,
             tls_acceptor,
-            corpus,
         })
     }
 
@@ -237,6 +234,7 @@ impl Server {
 
     pub async fn accept_measured(
         &mut self,
+        corpus: &Vec<Utf8PathBuf>,
     ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
         let (stream, addr) = self.tcp_listener.accept().await?;
 
@@ -250,7 +248,7 @@ impl Server {
             let mut chain = x509_cert::PkiPath::new();
 
             for c in certs {
-                chain.push(Certificate::from_der(&c.as_ref()).unwrap());
+                chain.push(Certificate::from_der(c.as_ref()).unwrap());
             }
             let platform_id =
                 crate::measurements::PlatformId::from_pki_path(&chain).unwrap();
@@ -259,7 +257,7 @@ impl Server {
                 platform_id.unwrap().as_str().unwrap()
             );
         }
-        crate::measurements::measure_from_corpus(&self.corpus)?;
+        crate::measurements::measure_from_corpus(corpus)?;
 
         Ok((Stream::new(stream.into()), addr))
     }

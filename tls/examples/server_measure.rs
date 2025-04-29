@@ -46,7 +46,7 @@ async fn main() {
 
     let args = Args::parse();
 
-    if args.roots.len() < 1 {
+    if args.roots.is_empty() {
         panic!("Must specify at least one root");
     }
 
@@ -64,7 +64,6 @@ async fn main() {
                 cert_chain,
             },
         },
-        corpus: args.measure,
     };
 
     let mut server = Server::new(server_config, listen_addr, log.clone())
@@ -72,7 +71,7 @@ async fn main() {
         .unwrap();
 
     loop {
-        let (stream, _) = server.accept_measured().await.unwrap();
+        let (stream, _) = server.accept_measured(&args.measure).await.unwrap();
         let (mut reader, mut writer) = split(stream);
         let n = copy(&mut reader, &mut writer).await.unwrap();
         writer.flush().await.unwrap();

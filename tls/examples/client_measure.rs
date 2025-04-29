@@ -46,7 +46,7 @@ async fn main() {
 
     let args = Args::parse();
 
-    if args.roots.len() < 1 {
+    if args.roots.is_empty() {
         panic!("Need at least one root");
     }
 
@@ -62,12 +62,11 @@ async fn main() {
                 cert_chain,
             },
         },
-        corpus: args.measure,
     };
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    let stream = Client::connect_measured(client_config, addr, log.clone())
+    let stream = Client::connect_measured(client_config, addr, &args.measure, log.clone())
         .await
         .unwrap();
 
