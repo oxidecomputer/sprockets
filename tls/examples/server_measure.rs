@@ -71,7 +71,7 @@ async fn main() {
         .unwrap();
 
     loop {
-        let (stream, _) = server.accept_measured(&args.measure).await.unwrap();
+        let (stream, _, _) = server.accept_measured(&args.measure).await.unwrap();
         let (mut reader, mut writer) = split(stream);
         let n = copy(&mut reader, &mut writer).await.unwrap();
         writer.flush().await.unwrap();

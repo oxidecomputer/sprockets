@@ -123,21 +123,32 @@ pub fn artifacts_to_set(
     Ok(measurements)
 }
 
-pub fn measure_from_corpus(corpus: &Vec<Utf8PathBuf>) -> Result<(), Error> {
+pub enum MeasureResult {
+    Ok,
+    NotASubset,
+    EmptyCorpus,
+}
+
+pub fn measure_from_corpus(
+    corpus: &Vec<Utf8PathBuf>,
+) -> Result<MeasureResult, Error> {
+    if corpus.is_empty() {
+        return Ok(MeasureResult::EmptyCorpus);
+    }
+
     let corpus = crate::measurements::corim_to_set(corpus)?;
 
     let ipcc = crate::ipcc::Ipcc::new().map_err(crate::Error::RotRequest)?;
-    // XXX error handling what is it lol
-    let log = ipcc.get_measurement_log().unwrap();
-    let certs = ipcc.get_certificates().unwrap();
+    let log = ipcc.get_measurement_log()?;
+    let certs = ipcc.get_certificates()?;
 
     let measurements = crate::measurements::artifacts_to_set(&certs, &log)?;
 
     if !measurements.is_subset(&corpus) {
-        panic!("Your measurements are wrong :(");
+        return Ok(MeasureResult::NotASubset);
     }
 
-    Ok(())
+    Ok(MeasureResult::Ok)
 }
 
 pub trait FromPkiPath {

@@ -66,9 +66,14 @@ async fn main() {
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    let stream = Client::connect_measured(client_config, addr, &args.measure, log.clone())
-        .await
-        .unwrap();
+    let stream = Client::connect_measured(
+        client_config,
+        addr,
+        &args.measure,
+        log.clone(),
+    )
+    .await
+    .unwrap();
 
     let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());
     let (mut reader, mut writer) = split(stream);

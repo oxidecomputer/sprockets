@@ -7,6 +7,7 @@
 use crate::keys::{
     CertResolver, ResolveSetting, RotCertVerifier, SprocketsConfig,
 };
+pub use crate::measurements::MeasureResult;
 use crate::{crypto_provider, load_root_cert};
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
@@ -18,7 +19,7 @@ use rustls::{
     version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
-use slog::error;
+use slog::{error, info};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -125,7 +126,7 @@ impl ClientCertVerifier for RotCertVerifier {
 }
 
 pub struct Server {
-    _log: slog::Logger,
+    log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
 }
@@ -217,7 +218,7 @@ impl Server {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
         Ok(Server {
-            _log: log,
+            log: log,
             tcp_listener,
             tls_acceptor,
         })
@@ -235,12 +236,15 @@ impl Server {
     pub async fn accept_measured(
         &mut self,
         corpus: &Vec<Utf8PathBuf>,
-    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr, Option<String>), Error>
+    {
         let (stream, addr) = self.tcp_listener.accept().await?;
 
         let stream = self.tls_acceptor.clone().accept(stream).await?;
 
         let (_, state) = stream.get_ref();
+
+        let mut platform_id: Option<String> = None;
 
         use crate::measurements::FromPkiPath;
         use der::Decode;
@@ -250,15 +254,29 @@ impl Server {
             for c in certs {
                 chain.push(Certificate::from_der(c.as_ref()).unwrap());
             }
-            let platform_id =
-                crate::measurements::PlatformId::from_pki_path(&chain).unwrap();
-            println!(
-                "Connection from peer {}",
-                platform_id.unwrap().as_str().unwrap()
+            let id = String::from(
+                crate::measurements::PlatformId::from_pki_path(&chain)
+                    .unwrap()
+                    .unwrap()
+                    .as_str()
+                    .unwrap(),
             );
+            info!(self.log, "Connection from peer {}", id);
+            platform_id = Some(id);
         }
-        crate::measurements::measure_from_corpus(corpus)?;
 
-        Ok((Stream::new(stream.into()), addr))
+        let final_id = match crate::measurements::measure_from_corpus(corpus)? {
+            MeasureResult::Ok => platform_id,
+            MeasureResult::EmptyCorpus => {
+                info!(self.log, "Empty measurement corpus");
+                None
+            }
+            MeasureResult::NotASubset => {
+                info!(self.log, "Incorrect measurement corpus");
+                None
+            }
+        };
+
+        Ok((Stream::new(stream.into()), addr, final_id))
     }
 }
