@@ -44,7 +44,7 @@ async fn main() {
 
     let args = Args::parse();
 
-    if args.roots.len() < 1 {
+    if args.roots.is_empty() {
         panic!("Need at least one root");
     }
 

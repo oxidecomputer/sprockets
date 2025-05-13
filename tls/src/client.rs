@@ -4,17 +4,13 @@
 
 //! A TLS based client
 
-use rustls::pki_types::ServerName;
-use std::net::SocketAddrV6;
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
-
 use crate::keys::ResolveSetting;
 use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+pub use crate::measurements::MeasureResult;
 use crate::{crypto_provider, load_root_cert};
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
+use rustls::pki_types::ServerName;
 use rustls::{
     client::{
         danger::{
@@ -27,6 +23,10 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
+use std::net::SocketAddrV6;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 use x509_cert::Certificate;
 
 impl ResolvesClientCert for CertResolver {
@@ -130,6 +130,34 @@ impl Client {
         Client::connect_with_config(c, addr, log).await
     }
 
+    pub async fn connect_measured(
+        config: SprocketsConfig,
+        addr: SocketAddrV6,
+        corpus: &Vec<Utf8PathBuf>,
+        log: slog::Logger,
+    ) -> Result<(Stream<TcpStream>, Option<String>), Error> {
+        let (c, measure) = match config.resolve {
+            ResolveSetting::Local {
+                priv_key,
+                cert_chain,
+            } => (
+                Client::new_tls_local_client_config(
+                    priv_key,
+                    cert_chain,
+                    config.roots,
+                    log.clone(),
+                )?,
+                false,
+            ),
+            ResolveSetting::Ipcc => (
+                Client::new_tls_ipcc_client_config(config.roots, log.clone())?,
+                true,
+            ),
+        };
+        Client::connect_with_config_measured(c, addr, corpus, log, measure)
+            .await
+    }
+
     fn new_tls_local_client_config(
         priv_key: Utf8PathBuf,
         cert_chain: Utf8PathBuf,
@@ -214,6 +242,60 @@ impl Client {
         let stream = connector.connect(dnsname, stream).await?;
         // TODO: Measurement Attestations
         Ok(Stream::new(stream.into()))
+    }
+
+    /// Connect to a remote peer
+    async fn connect_with_config_measured(
+        tls_config: ClientConfig,
+        addr: SocketAddrV6,
+        corpus: &Vec<Utf8PathBuf>,
+        log: slog::Logger,
+        measure: bool,
+    ) -> Result<(Stream<TcpStream>, Option<String>), Error> {
+        // Nodes on the bootstrap network don't have DNS names. We don't
+        // actually ever know who we are connecting to on the bootstrap
+        // network, as we just learned of potential peers by IPv6 address from
+        // DDMD. We learn the identities of peers from the subject name in the
+        // certificate. Because of this we always pass a dummy DNS name, and
+        // ignore it when validating the connection on the server side.
+        let dnsname = ServerName::try_from("unknown.com").unwrap();
+
+        let connector = TlsConnector::from(Arc::new(tls_config));
+        let stream = match TcpStream::connect(addr).await {
+            Ok(s) => s,
+            Err(e) => {
+                println!("{:?}", e);
+                return Err(e.into());
+            }
+        };
+
+        let stream = connector.connect(dnsname, stream).await?;
+
+        let (_, state) = stream.get_ref();
+
+        let platform_id = crate::measurements::get_platform_id(
+            state.peer_certificates().ok_or(Error::NoPeerCertificate)?,
+        )?;
+
+        let final_id = if measure {
+            match crate::measurements::measure_from_corpus(corpus)? {
+                MeasureResult::Ok => Some(platform_id),
+                MeasureResult::EmptyCorpus => {
+                    info!(log, "Empty measurement corpus");
+                    None
+                }
+                MeasureResult::NotASubset => {
+                    info!(log, "Incorrect measurement corpus");
+                    None
+                }
+            }
+        } else {
+            Some(platform_id)
+        };
+
+        crate::measurements::measure_from_corpus(corpus)?;
+
+        Ok((Stream::new(stream.into()), final_id))
     }
 }
 

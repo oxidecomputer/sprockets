@@ -2,15 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Example IPCC server that echos back whatever was sent
+//! Example IPCC client that echos out whatever it gets back
 use camino::Utf8PathBuf;
 use clap::Parser;
-use slog::{info, Drain};
+use slog::Drain;
+use sprockets_tls::client::Client;
 use sprockets_tls::keys::{ResolveSetting, SprocketsConfig};
-use sprockets_tls::server::Server;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
+use tokio::io::{stdin as tokio_stdin, stdout as tokio_stdout};
 
 #[derive(Debug, Parser)]
 enum Setting {
@@ -31,6 +32,8 @@ struct Args {
     /// Address and port to bind
     #[clap(long)]
     addr: String,
+    /// Measurement corpus
+    measure: Vec<Utf8PathBuf>,
 }
 
 #[tokio::main]
@@ -44,12 +47,10 @@ async fn main() {
     let args = Args::parse();
 
     if args.roots.is_empty() {
-        panic!("Must specify at least one root");
+        panic!("Need at least one root");
     }
 
-    let listen_addr = SocketAddrV6::from_str(&args.addr).unwrap();
-
-    let server_config = SprocketsConfig {
+    let client_config = SprocketsConfig {
         roots: args.roots,
         resolve: match args.resolve {
             Setting::Ipcc => ResolveSetting::Ipcc,
@@ -63,15 +64,30 @@ async fn main() {
         },
     };
 
-    let mut server = Server::new(server_config, listen_addr, log.clone())
-        .await
-        .unwrap();
+    let addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    loop {
-        let (stream, _) = server.accept().await.unwrap();
-        let (mut reader, mut writer) = split(stream);
-        let n = copy(&mut reader, &mut writer).await.unwrap();
-        writer.flush().await.unwrap();
-        info!(log, "Echo: {}", n);
+    let (stream, platform_id) = Client::connect_measured(
+        client_config,
+        addr,
+        &args.measure,
+        log.clone(),
+    )
+    .await
+    .unwrap();
+
+    if let Some(id) = platform_id {
+        slog::info!(log, "Connected to peer {}", id);
+    }
+    let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());
+    let (mut reader, mut writer) = split(stream);
+
+    tokio::select! {
+        ret = copy(&mut reader, &mut stdout) => {
+            let _ = ret;
+        },
+        ret = copy(&mut stdin, &mut writer) => {
+            ret.unwrap();
+            writer.shutdown().await.unwrap()
+        }
     }
 }

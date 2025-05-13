@@ -2,5 +2,5 @@
 # We choose a specific toolchain (rather than "stable") for repeatability.  The
 # intent is to keep this up-to-date with recently-released stable Rust.
 # This is also required for buildomat
-channel = "1.80.1"
+channel = "1.81"
 profile = "default"

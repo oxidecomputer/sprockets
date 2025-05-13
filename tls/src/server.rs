@@ -7,6 +7,7 @@
 use crate::keys::{
     CertResolver, ResolveSetting, RotCertVerifier, SprocketsConfig,
 };
+pub use crate::measurements::MeasureResult;
 use crate::{crypto_provider, load_root_cert};
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
@@ -18,7 +19,7 @@ use rustls::{
     version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
-use slog::error;
+use slog::{error, info};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -125,9 +126,10 @@ impl ClientCertVerifier for RotCertVerifier {
 }
 
 pub struct Server {
-    _log: slog::Logger,
+    log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
+    measure: bool,
 }
 
 impl Server {
@@ -192,34 +194,40 @@ impl Server {
         addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Server, Error> {
-        let c = match config.resolve {
+        let (c, measure) = match config.resolve {
             ResolveSetting::Local {
                 priv_key,
                 cert_chain,
-            } => Server::new_tls_local_server_config(
-                priv_key,
-                cert_chain,
-                config.roots,
-                log.clone(),
-            )?,
-            ResolveSetting::Ipcc => {
-                Server::new_tls_ipcc_server_config(config.roots, log.clone())?
-            }
+            } => (
+                Server::new_tls_local_server_config(
+                    priv_key,
+                    cert_chain,
+                    config.roots,
+                    log.clone(),
+                )?,
+                false,
+            ),
+            ResolveSetting::Ipcc => (
+                Server::new_tls_ipcc_server_config(config.roots, log.clone())?,
+                true,
+            ),
         };
-        Server::listen(c, addr, log).await
+        Server::listen(c, addr, log, measure).await
     }
 
     async fn listen(
         tls_config: ServerConfig,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
+        measure: bool,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
         Ok(Server {
-            _log: log,
+            log,
             tcp_listener,
             tls_acceptor,
+            measure,
         })
     }
 
@@ -229,8 +237,40 @@ impl Server {
         let (stream, addr) = self.tcp_listener.accept().await?;
         let stream = self.tls_acceptor.clone().accept(stream).await?;
 
-        // TODO: Measurement attestations
-
         Ok((Stream::new(stream.into()), addr))
+    }
+
+    pub async fn accept_measured(
+        &mut self,
+        corpus: &Vec<Utf8PathBuf>,
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr, Option<String>), Error>
+    {
+        let (stream, addr) = self.tcp_listener.accept().await?;
+
+        let stream = self.tls_acceptor.clone().accept(stream).await?;
+
+        let (_, state) = stream.get_ref();
+
+        let platform_id = crate::measurements::get_platform_id(
+            state.peer_certificates().ok_or(Error::NoPeerCertificate)?,
+        )?;
+
+        let final_id = if self.measure {
+            match crate::measurements::measure_from_corpus(corpus)? {
+                MeasureResult::Ok => Some(platform_id),
+                MeasureResult::EmptyCorpus => {
+                    info!(self.log, "Empty measurement corpus");
+                    None
+                }
+                MeasureResult::NotASubset => {
+                    info!(self.log, "Incorrect measurement corpus");
+                    None
+                }
+            }
+        } else {
+            Some(platform_id)
+        };
+
+        Ok((Stream::new(stream.into()), addr, final_id))
     }
 }
