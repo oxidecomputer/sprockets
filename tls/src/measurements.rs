@@ -215,3 +215,24 @@ impl FromPkiPath for PlatformId {
         Ok(platform_id)
     }
 }
+
+pub fn get_platform_id(
+    certs: &[rustls::pki_types::CertificateDer<'static>],
+) -> Result<String, Error> {
+    use crate::measurements::FromPkiPath;
+    use der::Decode;
+
+    let mut chain = x509_cert::PkiPath::new();
+
+    for c in certs {
+        chain.push(
+            crate::Certificate::from_der(c.as_ref()).map_err(Error::Der)?,
+        );
+    }
+    Ok(String::from(
+        crate::measurements::PlatformId::from_pki_path(&chain)?
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    ))
+}

@@ -4,17 +4,13 @@
 
 //! A TLS based client
 
-use rustls::pki_types::ServerName;
-use std::net::SocketAddrV6;
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
-
 use crate::keys::ResolveSetting;
 use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+pub use crate::measurements::MeasureResult;
 use crate::{crypto_provider, load_root_cert};
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
+use rustls::pki_types::ServerName;
 use rustls::{
     client::{
         danger::{
@@ -27,6 +23,10 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
+use std::net::SocketAddrV6;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 use x509_cert::Certificate;
 
 impl ResolvesClientCert for CertResolver {
@@ -135,22 +135,27 @@ impl Client {
         addr: SocketAddrV6,
         corpus: &Vec<Utf8PathBuf>,
         log: slog::Logger,
-    ) -> Result<Stream<TcpStream>, Error> {
-        let c = match config.resolve {
+    ) -> Result<(Stream<TcpStream>, Option<String>), Error> {
+        let (c, measure) = match config.resolve {
             ResolveSetting::Local {
                 priv_key,
                 cert_chain,
-            } => Client::new_tls_local_client_config(
-                priv_key,
-                cert_chain,
-                config.roots,
-                log.clone(),
-            )?,
-            ResolveSetting::Ipcc => {
-                Client::new_tls_ipcc_client_config(config.roots, log.clone())?
-            }
+            } => (
+                Client::new_tls_local_client_config(
+                    priv_key,
+                    cert_chain,
+                    config.roots,
+                    log.clone(),
+                )?,
+                false,
+            ),
+            ResolveSetting::Ipcc => (
+                Client::new_tls_ipcc_client_config(config.roots, log.clone())?,
+                true,
+            ),
         };
-        Client::connect_with_config_measured(c, addr, corpus, log).await
+        Client::connect_with_config_measured(c, addr, corpus, log, measure)
+            .await
     }
 
     fn new_tls_local_client_config(
@@ -244,8 +249,9 @@ impl Client {
         tls_config: ClientConfig,
         addr: SocketAddrV6,
         corpus: &Vec<Utf8PathBuf>,
-        _log: slog::Logger,
-    ) -> Result<Stream<TcpStream>, Error> {
+        log: slog::Logger,
+        measure: bool,
+    ) -> Result<(Stream<TcpStream>, Option<String>), Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
         // network, as we just learned of potential peers by IPv6 address from
@@ -265,9 +271,31 @@ impl Client {
 
         let stream = connector.connect(dnsname, stream).await?;
 
+        let (_, state) = stream.get_ref();
+
+        let platform_id = crate::measurements::get_platform_id(
+            state.peer_certificates().ok_or(Error::NoPeerCertificate)?,
+        )?;
+
+        let final_id = if measure {
+            match crate::measurements::measure_from_corpus(corpus)? {
+                MeasureResult::Ok => Some(platform_id),
+                MeasureResult::EmptyCorpus => {
+                    info!(log, "Empty measurement corpus");
+                    None
+                }
+                MeasureResult::NotASubset => {
+                    info!(log, "Incorrect measurement corpus");
+                    None
+                }
+            }
+        } else {
+            Some(platform_id)
+        };
+
         crate::measurements::measure_from_corpus(corpus)?;
 
-        Ok(Stream::new(stream.into()))
+        Ok((Stream::new(stream.into()), final_id))
     }
 }
 

@@ -66,7 +66,7 @@ async fn main() {
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    let stream = Client::connect_measured(
+    let (stream, platform_id) = Client::connect_measured(
         client_config,
         addr,
         &args.measure,
@@ -75,6 +75,9 @@ async fn main() {
     .await
     .unwrap();
 
+    if let Some(id) = platform_id {
+        slog::info!(log, "Connected to peer {}", id);
+    }
     let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());
     let (mut reader, mut writer) = split(stream);
 

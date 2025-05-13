@@ -63,6 +63,9 @@ pub enum Error {
 
     #[error("corim error: {0}")]
     Corim(#[from] rats_corim::Error),
+
+    #[error("No certificate chain from peer")]
+    NoPeerCertificate,
 }
 
 /// A type representing an established sprockets connection.
@@ -212,6 +215,83 @@ mod tests {
         "#;
 
         let _: keys::SprocketsConfig = toml::from_str(local).unwrap();
+    }
+
+    #[tokio::test]
+    async fn measurement() {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let mut client_node_keydir = pki_keydir.clone();
+        client_node_keydir.push("sled1");
+        let mut server_node_keydir = pki_keydir.clone();
+        server_node_keydir.push("sled2");
+        let log = logger();
+
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46457").unwrap();
+
+        let server_config = keys::SprocketsConfig {
+            roots: vec![pki_keydir.join("root.cert.pem")],
+            resolve: keys::ResolveSetting::Local {
+                priv_key: server_node_keydir.join("sprockets-auth.key.pem"),
+                cert_chain: pki_keydir.join("chain2.pem"),
+            },
+        };
+
+        // Message to send over TLS
+        const MSG: &str = "Hello Joe";
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let log2 = log.clone();
+
+        tokio::spawn(async move {
+            let mut server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+            let (mut stream, _, platform_id) =
+                server.accept_measured(&vec![]).await.unwrap();
+            let mut buf = String::new();
+            stream.read_to_string(&mut buf).await.unwrap();
+
+            assert!(platform_id.is_some());
+            assert_eq!(buf.as_str(), MSG);
+
+            // Inform the main task that the test is complete.
+            let _ = done_tx.send(());
+        });
+
+        // Loop until we succesfully connect
+        let mut stream = loop {
+            let client_config = keys::SprocketsConfig {
+                roots: vec![pki_keydir.join("root.cert.pem")],
+                resolve: keys::ResolveSetting::Local {
+                    priv_key: client_node_keydir.join("sprockets-auth.key.pem"),
+                    cert_chain: pki_keydir.join("chain1.pem"),
+                },
+            };
+
+            if let Ok((stream, platform_id)) = Client::connect_measured(
+                client_config,
+                addr,
+                &vec![],
+                log.clone(),
+            )
+            .await
+            {
+                assert!(platform_id.is_some());
+                break stream;
+            }
+            sleep(Duration::from_millis(1)).await;
+        };
+
+        stream.write_all(MSG.as_bytes()).await.unwrap();
+
+        // Trigger an EOF so that `read_to_string` in the acceptor task
+        // completes.
+        stream.shutdown().await.unwrap();
+
+        // Wait for the other side of the connection to receive and assert the
+        // message
+        let _ = done_rx.await;
     }
 
     #[tokio::test]

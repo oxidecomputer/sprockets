@@ -129,6 +129,7 @@ pub struct Server {
     log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
+    measure: bool,
 }
 
 impl Server {
@@ -193,34 +194,40 @@ impl Server {
         addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Server, Error> {
-        let c = match config.resolve {
+        let (c, measure) = match config.resolve {
             ResolveSetting::Local {
                 priv_key,
                 cert_chain,
-            } => Server::new_tls_local_server_config(
-                priv_key,
-                cert_chain,
-                config.roots,
-                log.clone(),
-            )?,
-            ResolveSetting::Ipcc => {
-                Server::new_tls_ipcc_server_config(config.roots, log.clone())?
-            }
+            } => (
+                Server::new_tls_local_server_config(
+                    priv_key,
+                    cert_chain,
+                    config.roots,
+                    log.clone(),
+                )?,
+                false,
+            ),
+            ResolveSetting::Ipcc => (
+                Server::new_tls_ipcc_server_config(config.roots, log.clone())?,
+                true,
+            ),
         };
-        Server::listen(c, addr, log).await
+        Server::listen(c, addr, log, measure).await
     }
 
     async fn listen(
         tls_config: ServerConfig,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
+        measure: bool,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
         Ok(Server {
-            log: log,
+            log,
             tcp_listener,
             tls_acceptor,
+            measure,
         })
     }
 
@@ -244,37 +251,24 @@ impl Server {
 
         let (_, state) = stream.get_ref();
 
-        let mut platform_id: Option<String> = None;
+        let platform_id = crate::measurements::get_platform_id(
+            state.peer_certificates().ok_or(Error::NoPeerCertificate)?,
+        )?;
 
-        use crate::measurements::FromPkiPath;
-        use der::Decode;
-        if let Some(certs) = state.peer_certificates() {
-            let mut chain = x509_cert::PkiPath::new();
-
-            for c in certs {
-                chain.push(Certificate::from_der(c.as_ref()).unwrap());
+        let final_id = if self.measure {
+            match crate::measurements::measure_from_corpus(corpus)? {
+                MeasureResult::Ok => Some(platform_id),
+                MeasureResult::EmptyCorpus => {
+                    info!(self.log, "Empty measurement corpus");
+                    None
+                }
+                MeasureResult::NotASubset => {
+                    info!(self.log, "Incorrect measurement corpus");
+                    None
+                }
             }
-            let id = String::from(
-                crate::measurements::PlatformId::from_pki_path(&chain)
-                    .unwrap()
-                    .unwrap()
-                    .as_str()
-                    .unwrap(),
-            );
-            info!(self.log, "Connection from peer {}", id);
-            platform_id = Some(id);
-        }
-
-        let final_id = match crate::measurements::measure_from_corpus(corpus)? {
-            MeasureResult::Ok => platform_id,
-            MeasureResult::EmptyCorpus => {
-                info!(self.log, "Empty measurement corpus");
-                None
-            }
-            MeasureResult::NotASubset => {
-                info!(self.log, "Incorrect measurement corpus");
-                None
-            }
+        } else {
+            Some(platform_id)
         };
 
         Ok((Stream::new(stream.into()), addr, final_id))
