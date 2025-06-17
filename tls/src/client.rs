@@ -206,7 +206,7 @@ impl Client {
         let stream = match TcpStream::connect(addr).await {
             Ok(s) => s,
             Err(e) => {
-                println!("{:?}", e);
+                println!("{e:?}");
                 return Err(e.into());
             }
         };

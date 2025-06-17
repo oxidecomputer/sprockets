@@ -191,7 +191,7 @@ impl SigningKey for LocalEd25519SigningKey {
         &self,
         offered: &[SignatureScheme],
     ) -> Option<Box<dyn rustls::sign::Signer>> {
-        if !offered.iter().any(|&s| s == SignatureScheme::ED25519) {
+        if !offered.contains(&SignatureScheme::ED25519) {
             return None;
         }
 
@@ -221,7 +221,7 @@ impl SigningKey for IpccKey {
         &self,
         offered: &[SignatureScheme],
     ) -> Option<Box<dyn rustls::sign::Signer>> {
-        if !offered.iter().any(|&s| s == SignatureScheme::ED25519) {
+        if !offered.contains(&SignatureScheme::ED25519) {
             return None;
         }
         Some(Box::new(IpccSigner {}) as Box<dyn Signer>)
