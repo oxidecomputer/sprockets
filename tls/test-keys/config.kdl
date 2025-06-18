@@ -77,46 +77,6 @@ certificate "test-signer-a1" {
     }
 }
 
-key-pair "test-signer-a2" {
-    p384
-}
-
-entity "test-signer-a2" {
-    country-name "US"
-    organization-name "Oxide Computer Company"
-    common-name "test-platformid-1 Signer Staging A2"
-}
-
-certificate "test-signer-a2" {
-    issuer-certificate "test-root-a"
-    issuer-key "test-root-a"
-
-    subject-entity "test-signer-a2"
-    subject-key "test-signer-a2"
-
-    digest-algorithm "sha-384"
-    not-after "9999-12-31T23:59:59Z"
-    serial-number "01"
-
-    extensions {
-        subject-key-identifier critical=false
-        authority-key-identifier critical=false {
-            key-id
-        }
-
-        basic-constraints critical=true ca=true
-        key-usage critical=true {
-            key-cert-sign
-            crl-sign
-        }
-        certificate-policies critical=true {
-            oana-platform-identity
-            tcg-dice-kp-identity-init
-            tcg-dice-kp-attest-init
-            tcg-dice-kp-eca
-        }
-    }
-}
 /// Device 1
 key-pair "test-platformid-1" {
     ed25519
