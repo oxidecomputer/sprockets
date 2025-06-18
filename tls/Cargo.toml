@@ -12,7 +12,7 @@ cfg-if.workspace = true
 dice-verifier.workspace = true
 libipcc.workspace = true
 ed25519-dalek.workspace = true
-pem-rfc7468.workspace = true
+pem-rfc7468 = { workspace = true, features = ["std"] }
 rustls.workspace = true
 serde.workspace = true
 secrecy.workspace = true
