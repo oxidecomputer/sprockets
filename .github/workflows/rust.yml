@@ -32,13 +32,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
       - name: Report cargo version
         run: cargo --version
       - name: Report rustc version
         run: rustc --version
+      - name: Install pki-playground
+        run: cargo install --locked --git https://github.com/oxidecomputer/pki-playground
       - name: Build
         run: cargo build --all-targets --verbose
       - name: Run tests

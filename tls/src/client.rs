@@ -234,15 +234,15 @@ mod tests {
     fn test_client_verifier() {
         let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pki_keydir.push("test-keys");
-        let mut node_keydir = pki_keydir.clone();
-        node_keydir.push("sled1");
-        let root = load_root_cert(&pki_keydir.join("root.cert.pem")).unwrap();
+        let root =
+            load_root_cert(&pki_keydir.join("test-root-a.cert.pem")).unwrap();
         let verifier = RotCertVerifier::new(vec![root], logger()).unwrap();
         let resolver = CertResolver::new(
             logger(),
             ResolveSetting::Local {
-                priv_key: node_keydir.join("sprockets-auth.key.pem"),
-                cert_chain: pki_keydir.join("chain1.pem"),
+                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
+                cert_chain: pki_keydir
+                    .join("test-sprockets-auth-1.certlist.pem"),
             },
         );
         let certified_key = resolver.load_certified_key().unwrap();
