@@ -214,19 +214,16 @@ mod tests {
     async fn basic() {
         let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pki_keydir.push("test-keys");
-        let mut client_node_keydir = pki_keydir.clone();
-        client_node_keydir.push("sled1");
-        let mut server_node_keydir = pki_keydir.clone();
-        server_node_keydir.push("sled2");
         let log = logger();
 
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
 
         let server_config = keys::SprocketsConfig {
-            roots: vec![pki_keydir.join("root.cert.pem")],
+            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
             resolve: keys::ResolveSetting::Local {
-                priv_key: server_node_keydir.join("sprockets-auth.key.pem"),
-                cert_chain: pki_keydir.join("chain2.pem"),
+                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
+                cert_chain: pki_keydir
+                    .join("test-sprockets-auth-1.certlist.pem"),
             },
         };
 
@@ -253,10 +250,11 @@ mod tests {
         // Loop until we succesfully connect
         let mut stream = loop {
             let client_config = keys::SprocketsConfig {
-                roots: vec![pki_keydir.join("root.cert.pem")],
+                roots: vec![pki_keydir.join("test-root-a.cert.pem")],
                 resolve: keys::ResolveSetting::Local {
-                    priv_key: client_node_keydir.join("sprockets-auth.key.pem"),
-                    cert_chain: pki_keydir.join("chain1.pem"),
+                    priv_key: pki_keydir.join("test-sprockets-auth-2.key.pem"),
+                    cert_chain: pki_keydir
+                        .join("test-sprockets-auth-2.certlist.pem"),
                 },
             };
 

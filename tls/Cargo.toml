@@ -27,3 +27,12 @@ tokio-rustls.workspace = true
 toml.workspace = true
 x509-cert.workspace = true
 zeroize.workspace = true
+
+[build-dependencies]
+anyhow.workspace = true
+
+[features]
+unittest = []
+
+[dev-dependencies]
+sprockets-tls = { path = ".", features = ["unittest"] }

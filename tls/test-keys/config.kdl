@@ -201,6 +201,12 @@ certificate "test-sprockets-auth-1" {
     }
 }
 
+certificate-list "test-sprockets-auth-1" \
+    "test-signer-a1" \
+    "test-platformid-1" \
+    "test-deviceid-1" \
+    "test-sprockets-auth-1"
+
 /// Device 2
 
 key-pair "test-platformid-2" {
@@ -326,3 +332,8 @@ certificate "test-sprockets-auth-2" {
     }
 }
 
+certificate-list "test-sprockets-auth-2" \
+    "test-signer-a1" \
+    "test-platformid-2" \
+    "test-deviceid-2" \
+    "test-sprockets-auth-2"
