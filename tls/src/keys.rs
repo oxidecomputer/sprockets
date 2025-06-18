@@ -5,7 +5,6 @@
 //! TLS based connections
 
 use camino::Utf8PathBuf;
-use dice_verifier::PkiPathSignatureVerifier;
 use ed25519_dalek::pkcs8::PrivateKeyInfo;
 use ed25519_dalek::Signer as EdSigner;
 use ed25519_dalek::Verifier;
@@ -260,8 +259,7 @@ impl Signer for IpccSigner {
 /// are not compatible with WebPKI
 #[derive(Debug)]
 pub struct RotCertVerifier {
-    // We need to allow for multiple roots for verification
-    verifiers: Vec<PkiPathSignatureVerifier>,
+    pub roots: Vec<Certificate>,
     pub log: slog::Logger,
 }
 
@@ -270,11 +268,7 @@ impl RotCertVerifier {
         roots: Vec<Certificate>,
         log: slog::Logger,
     ) -> Result<Self, crate::Error> {
-        let verifiers = roots
-            .into_iter()
-            .map(|r| PkiPathSignatureVerifier::new(Some(r)))
-            .collect::<Result<Vec<PkiPathSignatureVerifier>, _>>()?;
-        Ok(RotCertVerifier { verifiers, log })
+        Ok(RotCertVerifier { roots, log })
     }
 
     /// Create a `PkiPath` suitable for `dice-verifier`
@@ -300,20 +294,22 @@ impl RotCertVerifier {
         intermediates: &[rustls::pki_types::CertificateDer<'_>],
     ) -> Result<(), rustls::Error> {
         let pki_path = Self::pki_path(end_entity, intermediates)?;
-        let mut err = vec![];
-        for v in &self.verifiers {
-            match v.verify(&pki_path) {
-                Ok(_) => {
-                    info!(self.log, "Certificate chain verified successfully");
-                    return Ok(());
-                }
-                Err(e) => err.push(e),
+        match dice_verifier::verify_cert_chain(&pki_path, Some(&self.roots)) {
+            Err(e) => {
+                error!(self.log, "verifier failed: {e}");
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                ))
+            }
+            Ok(root) => {
+                info!(
+                    self.log,
+                    "verifier succeeded against root w/ subject: {}",
+                    root.tbs_certificate.subject
+                );
+                Ok(())
             }
         }
-        error!(self.log, "Failed to verify cert: {err:?}");
-        Err(rustls::Error::InvalidCertificate(
-            rustls::CertificateError::BadEncoding,
-        ))
     }
 
     pub fn verify_signature(
