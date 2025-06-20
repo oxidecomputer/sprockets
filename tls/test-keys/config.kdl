@@ -126,7 +126,7 @@ key-pair "test-deviceid-1" {
 entity "test-deviceid-1" {
     country-name "US"
     organization-name "Oxide Computer Company"
-    common-name "/C=US/O=Oxide Computer Company/CN=test-deviceid-1"
+    common-name "test-deviceid-1"
 }
 
 certificate "test-deviceid-1" {
@@ -167,7 +167,7 @@ key-pair "test-sprockets-auth-1" {
 entity "test-sprockets-auth-1" {
     country-name "US"
     organization-name "Oxide Computer Company"
-    common-name "/C=US/O=Oxide Computer Company/CN=test-sprockets-auth-1"
+    common-name "test-sprockets-auth-1"
 }
 
 certificate "test-sprockets-auth-1" {
@@ -251,7 +251,7 @@ key-pair "test-deviceid-2" {
 entity "test-deviceid-2" {
     country-name "US"
     organization-name "Oxide Computer Company"
-    common-name "/C=US/O=Oxide Computer Company/CN=test-deviceid-2"
+    common-name "test-deviceid-2"
 }
 
 certificate "test-deviceid-2" {
@@ -292,7 +292,7 @@ key-pair "test-sprockets-auth-2" {
 entity "test-sprockets-auth-2" {
     country-name "US"
     organization-name "Oxide Computer Company"
-    common-name "/C=US/O=Oxide Computer Company/CN=test-sprockets-auth-2"
+    common-name "test-sprockets-auth-2"
 }
 
 certificate "test-sprockets-auth-2" {
