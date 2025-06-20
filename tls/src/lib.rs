@@ -20,10 +20,10 @@ use anyhow::Context;
 use std::fs::File;
 use std::pin::Pin;
 use std::task::{self, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_rustls::TlsStream;
 use x509_cert::{
-    der::{self, DecodePem},
+    der::{self, DecodePem, Encode, Reader, SliceReader},
     Certificate,
 };
 
@@ -59,6 +59,50 @@ pub enum Error {
 
     #[error("Incorrect Private Key Format: {0}")]
     BadPrivateKey(String),
+
+    #[error("Failed to create mock attester: {0}")]
+    AttestMock(#[from] dice_verifier::mock::AttestMockError),
+
+    #[error("Failed to create IPCC attester: {0}")]
+    AttestIpcc(#[from] dice_verifier::ipcc::IpccError),
+
+    #[error("Failed to parse CBOR encoded CoRIM: {0}")]
+    CorimError(#[from] dice_verifier::CorimError),
+
+    #[error(
+        "Failed to create MeasurementSet from attestation cert chain & log: {0}"
+    )]
+    MeasurementSet(#[from] dice_verifier::MeasurementSetError),
+
+    #[error("Failed to create ReferenceMeasurements from Corim: {0}")]
+    ReferenceMeasurements(#[from] dice_verifier::ReferenceMeasurementsError),
+
+    #[error("Attest error: {0}")]
+    Attest(#[from] dice_verifier::AttestError),
+
+    #[error("AttestData error: {0}")]
+    AttestData(#[from] attest_data::AttestDataError),
+
+    #[error("Failed to verify peer attestation cert chain: {0}")]
+    AttestCertVerifier(#[from] dice_verifier::PkiPathSignatureVerifierError),
+
+    #[error("Failed to get PlatformId from cert chain: {0}")]
+    PlatformIdPkiPath(#[from] dice_mfg_msgs::PlatformIdPkiPathError),
+
+    #[error("Failed to get string representation of PlatformId: {0}")]
+    PlatformId(#[from] dice_mfg_msgs::PlatformIdError),
+
+    #[error("failed to convert bytes into an integer: {0}")]
+    IntConversion(#[from] std::num::TryFromIntError),
+
+    #[error("Hubpack error: {0}")]
+    Hubpack(#[from] hubpack::Error),
+
+    #[error("Failed to verify attestation: {0}")]
+    AttestationVerifier(#[from] dice_verifier::VerifyAttestationError),
+
+    #[error("Failed to verify measurements from peer attestation data: {0}")]
+    AttestMeasurementsVerifier(#[from] dice_verifier::VerifyMeasurementsError),
 }
 
 /// A type representing an established sprockets connection.
@@ -160,6 +204,55 @@ pub fn load_root_cert(path: &Utf8PathBuf) -> Result<Certificate, Error> {
     Ok(root)
 }
 
+fn certs_to_der(certs: &[Certificate]) -> Result<Vec<u8>, Error> {
+    let mut der = Vec::new();
+
+    for cert in certs {
+        der.append(&mut cert.to_der()?);
+    }
+
+    Ok(der)
+}
+
+fn certs_from_der(buf: &[u8]) -> Result<Vec<Certificate>, Error> {
+    let mut certs = Vec::new();
+    let mut reader = SliceReader::new(buf)?;
+
+    while !reader.is_finished() {
+        certs.push(reader.decode()?);
+    }
+
+    Ok(certs)
+}
+
+async fn recv_msg<T: AsyncReadExt + Unpin>(
+    stream: &mut T,
+) -> Result<Vec<u8>, Error> {
+    // to receive a message we first get its length that is a u32 serialized as
+    // a little endian byte array
+    let mut msg_len = [0u8; 4];
+    stream.read_exact(&mut msg_len).await?;
+    let msg_len = u32::from_le_bytes(msg_len).try_into()?;
+
+    // with the length we can then get the message body
+    let mut buf = vec![0u8; msg_len];
+    stream.read_exact(&mut buf).await?;
+
+    Ok(buf)
+}
+
+async fn send_msg<T: AsyncWriteExt + Unpin>(
+    stream: &mut T,
+    msg: &[u8],
+) -> Result<(), Error> {
+    // to send a message we first send the receiver its length as a u32
+    // serialized as a little endian byte array
+    let len: u32 = msg.len().try_into()?;
+    stream.write_all(&len.to_le_bytes()).await?;
+    // then we send the message
+    Ok(stream.write_all(msg).await?)
+}
+
 /// Return a common [`CryptoProvider`] for use by both client and server.
 ///
 /// Use `ring` as a crypto provider. `aws_lc` doesn't compile on illumos.
@@ -197,12 +290,14 @@ mod tests {
         let ipcc = r#"
         resolve = {which = "ipcc"}
         roots = ["/path/to/root1", "/path/to/root2"]
+        attest = {which = "ipcc"}
         "#;
 
         let _: keys::SprocketsConfig = toml::from_str(ipcc).unwrap();
 
         let local = r#"
-        resolve = { which = "local", priv_key = "/path/to/priv.pem", cert_chain = "/path/to/chain.pem" }
+        resolve = { which = "local", priv_key = "/path/to/tq-priv.pem", cert_chain = "/path/to/tq-chain.pem" }
+        attest = { which = "local", priv_key = "/path/to/attest-priv.pem", cert_chain = "/path/to/attest-chain.pem", log = "/path/to/log.bin" }
 
         roots = ["/path/to/root1"]
         "#;
@@ -219,6 +314,11 @@ mod tests {
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
 
         let server_config = keys::SprocketsConfig {
+            attest: keys::AttestConfig::Local {
+                priv_key: pki_keydir.join("test-alias-1.key.pem"),
+                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
+                log: pki_keydir.join("log.bin"),
+            },
             roots: vec![pki_keydir.join("test-root-a.cert.pem")],
             resolve: keys::ResolveSetting::Local {
                 priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
@@ -232,12 +332,18 @@ mod tests {
 
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
         let log2 = log.clone();
+        let corpus = vec![
+            pki_keydir.join("corim-rot.cbor"),
+            pki_keydir.join("corim-sp.cbor"),
+        ];
 
         tokio::spawn(async move {
             let mut server = Server::new(server_config, addr, log2.clone())
                 .await
                 .unwrap();
-            let (mut stream, _) = server.accept().await.unwrap();
+
+            let (mut stream, _, _) =
+                server.accept(corpus.as_slice()).await.unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
 
@@ -248,8 +354,13 @@ mod tests {
         });
 
         // Loop until we succesfully connect
-        let mut stream = loop {
+        let (mut stream, _) = loop {
             let client_config = keys::SprocketsConfig {
+                attest: keys::AttestConfig::Local {
+                    priv_key: pki_keydir.join("test-alias-2.key.pem"),
+                    cert_chain: pki_keydir.join("test-alias-2.certlist.pem"),
+                    log: pki_keydir.join("log.bin"),
+                },
                 roots: vec![pki_keydir.join("test-root-a.cert.pem")],
                 resolve: keys::ResolveSetting::Local {
                     priv_key: pki_keydir.join("test-sprockets-auth-2.key.pem"),
@@ -258,10 +369,15 @@ mod tests {
                 },
             };
 
-            if let Ok(stream) =
-                Client::connect(client_config, addr, log.clone()).await
+            let corpus = vec![
+                pki_keydir.join("corim-rot.cbor"),
+                pki_keydir.join("corim-sp.cbor"),
+            ];
+
+            if let Ok((stream, platform_id)) =
+                Client::connect(client_config, addr, corpus, log.clone()).await
             {
-                break stream;
+                break (stream, platform_id);
             }
             sleep(Duration::from_millis(1)).await;
         };

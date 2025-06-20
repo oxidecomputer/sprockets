@@ -9,9 +9,11 @@ anyhow.workspace = true
 attest-data.workspace = true
 camino.workspace = true
 cfg-if.workspace = true
-dice-verifier.workspace = true
+dice-mfg-msgs = { workspace = true, features = ["std"] }
+dice-verifier = { workspace = true, features = ["ipcc", "mock"] }
 libipcc.workspace = true
 ed25519-dalek.workspace = true
+hubpack = "0.1.2"
 pem-rfc7468 = { workspace = true, features = ["std"] }
 rustls.workspace = true
 serde.workspace = true

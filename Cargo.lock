@@ -297,6 +297,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "corncobs"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0e03e9489176ebd301922fdcd0234f6dee954cbf65311863353f20d2746a8db"
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -445,6 +451,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dice-mfg-msgs"
+version = "0.2.1"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4b408edc1d00f108ddf635415d783e6f12fe9641#4b408edc1d00f108ddf635415d783e6f12fe9641"
+dependencies = [
+ "const-oid",
+ "corncobs",
+ "hubpack",
+ "serde",
+ "serde-big-array",
+ "thiserror 2.0.12",
+ "x509-cert",
+ "zerocopy",
+]
+
+[[package]]
 name = "dice-verifier"
 version = "0.3.0-pre0"
 source = "git+https://github.com/oxidecomputer/dice-util?rev=4b408edc1d00f108ddf635415d783e6f12fe9641#4b408edc1d00f108ddf635415d783e6f12fe9641"
@@ -454,6 +475,7 @@ dependencies = [
  "ed25519-dalek",
  "env_logger",
  "hubpack",
+ "libipcc",
  "log",
  "p384",
  "rats-corim",
@@ -594,7 +616,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -821,7 +843,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1135,7 +1157,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1243,6 +1265,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -1405,8 +1436,10 @@ dependencies = [
  "camino",
  "cfg-if",
  "clap",
+ "dice-mfg-msgs",
  "dice-verifier",
  "ed25519-dalek",
+ "hubpack",
  "libipcc",
  "pem-rfc7468",
  "rustls",
@@ -1503,7 +1536,7 @@ dependencies = [
  "fastrand",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2000,6 +2033,26 @@ dependencies = [
  "der",
  "spki",
  "tls_codec",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1039dd0d3c310cf05de012d8a39ff557cb0d23087fd44cad61df08fc31907a2f"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ecf5b4cc5364572d7f4c329661bcc82724222973f2cab6f050a4e5c22f75181"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]

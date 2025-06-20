@@ -6,8 +6,8 @@
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
-use sprockets_tls::keys::{ResolveSetting, SprocketsConfig};
-use sprockets_tls::server::Server;
+use sprockets_tls::keys::{AttestConfig, ResolveSetting, SprocketsConfig};
+use sprockets_tls::Server;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
@@ -16,8 +16,16 @@ use tokio::io::{copy, split, AsyncWriteExt};
 enum Setting {
     Ipcc,
     Local {
-        priv_key: Utf8PathBuf,
-        cert_chain: Utf8PathBuf,
+        /// TLS signing key used in Trust Quorum
+        tq_priv_key: Utf8PathBuf,
+        /// Cert chain for TLS signing key
+        tq_cert_chain: Utf8PathBuf,
+        /// Key used to sign the attestations produced by AttestMock
+        attest_priv_key: Utf8PathBuf,
+        /// Cert chain for attestation signing key
+        attest_cert_chain: Utf8PathBuf,
+        /// Measurement log produced by AttestMock
+        log: Utf8PathBuf,
     },
 }
 
@@ -27,7 +35,11 @@ struct Args {
     #[clap(long)]
     roots: Vec<Utf8PathBuf>,
     #[clap(subcommand)]
-    resolve: Setting,
+    config: Setting,
+    /// CBOR encoded CoRIM documents used as reference measurements in the
+    /// attestation appraisal process
+    #[clap(long)]
+    corpus: Vec<Utf8PathBuf>,
     /// Address and port to bind
     #[clap(long)]
     addr: String,
@@ -49,18 +61,31 @@ async fn main() {
 
     let listen_addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
-    let server_config = SprocketsConfig {
-        roots: args.roots,
-        resolve: match args.resolve {
-            Setting::Ipcc => ResolveSetting::Ipcc,
-            Setting::Local {
-                priv_key,
-                cert_chain,
-            } => ResolveSetting::Local {
-                priv_key,
-                cert_chain,
+    let (attest, resolve) = match args.config {
+        Setting::Ipcc => (AttestConfig::Ipcc, ResolveSetting::Ipcc),
+        Setting::Local {
+            tq_priv_key,
+            tq_cert_chain,
+            attest_priv_key,
+            attest_cert_chain,
+            log,
+        } => (
+            AttestConfig::Local {
+                priv_key: attest_priv_key,
+                cert_chain: attest_cert_chain,
+                log,
             },
-        },
+            ResolveSetting::Local {
+                priv_key: tq_priv_key,
+                cert_chain: tq_cert_chain,
+            },
+        ),
+    };
+
+    let server_config = SprocketsConfig {
+        attest,
+        roots: args.roots,
+        resolve,
     };
 
     let mut server = Server::new(server_config, listen_addr, log.clone())
@@ -68,7 +93,10 @@ async fn main() {
         .unwrap();
 
     loop {
-        let (stream, _) = server.accept().await.unwrap();
+        let (stream, _, platform_id) =
+            server.accept(args.corpus.as_slice()).await.unwrap();
+        let platform_id = platform_id.as_str().unwrap();
+        info!(log, "connected to attested peer: {platform_id}");
         let (mut reader, mut writer) = split(stream);
         let n = copy(&mut reader, &mut writer).await.unwrap();
         writer.flush().await.unwrap();

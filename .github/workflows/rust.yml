@@ -41,6 +41,8 @@ jobs:
         run: rustc --version
       - name: Install pki-playground
         run: cargo install --locked --git https://github.com/oxidecomputer/pki-playground
+      - name: Install attest-mock
+        run: cargo install --locked --git https://github.com/oxidecomputer/dice-util attest-mock
       - name: Build
         run: cargo build --all-targets --verbose
       - name: Run tests
