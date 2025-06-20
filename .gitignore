@@ -1,2 +1,5 @@
 /target
+/tls/test-keys/corim-*.cbor
+/tls/test-keys/corim-*.cbor
+/tls/test-keys/log.bin
 /tls/test-keys/test-*.pem

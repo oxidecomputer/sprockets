@@ -20,6 +20,7 @@ attest-data = { git = "https://github.com/oxidecomputer/dice-util", rev = "4b408
 clap = { version = "4", default-features = false, features = ["std", "derive", "default", "wrap_help"] }
 ciborium = "0.2.2"
 cfg-if = "1.0"
+dice-mfg-msgs = { git = "https://github.com/oxidecomputer/dice-util", rev = "4b408edc1d00f108ddf635415d783e6f12fe9641" }
 dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "4b408edc1d00f108ddf635415d783e6f12fe9641" }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }

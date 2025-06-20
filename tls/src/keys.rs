@@ -379,5 +379,56 @@ impl RotCertVerifier {
 #[serde(deny_unknown_fields)]
 pub struct SprocketsConfig {
     pub resolve: ResolveSetting,
+    pub attest: AttestConfig,
     pub roots: Vec<Utf8PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "which", rename_all = "snake_case")]
+/// Configuration for attestation interface / artifacts.
+pub enum AttestConfig {
+    // Use `dice-verifier::AttestIpcc`.
+    Ipcc,
+    // Use artifacts from local files with `dice_verifier::AttestMock`.
+    Local {
+        priv_key: Utf8PathBuf,
+        cert_chain: Utf8PathBuf,
+        log: Utf8PathBuf,
+    },
+}
+
+/// An attestation from the RoT and, provided the appropriate root, the
+/// artifacts required to verify its authenticity.
+pub struct AttestArtifacts {
+    pub certs: Vec<Certificate>,
+    pub log: dice_verifier::Log,
+    pub attestation: dice_verifier::Attestation,
+}
+
+/// This function encapsulates our IPCC usage in a non-async function. This is
+/// required till the Ipcc handle is `Send`.
+///
+/// NOTE: The `Nonce` parameter must be the nonce provided by the peer in an
+/// attestation exchange.
+pub fn get_attest_data(
+    config: &AttestConfig,
+    nonce: &dice_verifier::Nonce,
+) -> Result<AttestArtifacts, Error> {
+    use dice_verifier::{ipcc::AttestIpcc, Attest, AttestMock};
+
+    // create the `Attest` impl prescribed by the config
+    let attest: Box<dyn Attest> = match config {
+        AttestConfig::Ipcc => Box::new(AttestIpcc::new()?),
+        AttestConfig::Local {
+            priv_key,
+            cert_chain,
+            log,
+        } => Box::new(AttestMock::load(cert_chain, log, priv_key)?),
+    };
+
+    Ok(AttestArtifacts {
+        certs: attest.get_certificates()?,
+        log: attest.get_measurement_log()?,
+        attestation: attest.attest(nonce)?,
+    })
 }

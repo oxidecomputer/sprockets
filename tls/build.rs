@@ -35,6 +35,27 @@ fn pki_gen_cmd(command: &str) -> Result<()> {
     Ok(())
 }
 
+/// Execute one of the `attest-mock` commands to generate attestation
+/// artifacts used in testing.
+#[cfg(feature = "unittest")]
+fn attest_gen_cmd(command: &str, input: &str, output: &str) -> Result<()> {
+    // attest-mock "input" "cmd" > "output"
+    let mut cmd = std::process::Command::new("attest-mock");
+    cmd.arg(input).arg(command);
+    let cmd_output =
+        cmd.output().context("executing command \"attest-mock\"")?;
+
+    if cmd_output.status.success() {
+        std::fs::write(output, cmd_output.stdout).context("write {output}")
+    } else {
+        let stderr = String::from_utf8(cmd_output.stderr)
+            .context("String from attest-mock stderr")?;
+        println!("stderr: {stderr}");
+
+        Err(anyhow!("cmd failed: {cmd:?}"))
+    }
+}
+
 fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
     {
@@ -52,6 +73,13 @@ fn main() -> Result<()> {
         pki_gen_cmd("generate-key-pairs")?;
         pki_gen_cmd("generate-certificates")?;
         pki_gen_cmd("generate-certificate-lists")?;
+
+        // generate measurement log used by `cargo test`
+        attest_gen_cmd("log", "log.kdl", "log.bin")?;
+
+        // generate the corpus of reference measurements used by `cargo test`
+        attest_gen_cmd("corim", "corim-rot.kdl", "corim-rot.cbor")?;
+        attest_gen_cmd("corim", "corim-sp.kdl", "corim-sp.cbor")?;
 
         std::env::set_current_dir(start_dir)
             .context("restore current dir to original")?;

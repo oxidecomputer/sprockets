@@ -12,7 +12,9 @@ set -o xtrace
 cargo --version
 rustc --version
 
-# dependencies used by `build.rs` to build test PKI
+# dependencies used by `build.rs` to build test PKI, measurement log, & corpus
 cargo install --locked --git https://github.com/oxidecomputer/pki-playground
+cargo install --locked \
+    --git https://github.com/oxidecomputer/dice-util attest-mock
 
 cargo test

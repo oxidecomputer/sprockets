@@ -5,11 +5,20 @@
 //! A TLS based server
 
 use crate::keys::{
-    CertResolver, ResolveSetting, RotCertVerifier, SprocketsConfig,
+    get_attest_data, AttestConfig, CertResolver, ResolveSetting,
+    RotCertVerifier, SprocketsConfig,
 };
-use crate::{crypto_provider, load_root_cert};
+use crate::{
+    certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
+    send_msg,
+};
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
+use dice_mfg_msgs::PlatformId;
+use dice_verifier::{
+    Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
+};
+use hubpack::SerializedSize;
 use rustls::{
     server::{
         danger::{ClientCertVerified, ClientCertVerifier},
@@ -18,12 +27,12 @@ use rustls::{
     version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
-use slog::error;
+use slog::{error, info};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
-use x509_cert::Certificate;
+use x509_cert::{der::DecodePem, Certificate};
 
 impl ResolvesServerCert for CertResolver {
     fn resolve(
@@ -125,9 +134,11 @@ impl ClientCertVerifier for RotCertVerifier {
 }
 
 pub struct Server {
-    _log: slog::Logger,
+    log: slog::Logger,
     tcp_listener: TcpListener,
     tls_acceptor: TlsAcceptor,
+    roots: Vec<Certificate>,
+    attest_config: AttestConfig,
 }
 
 impl Server {
@@ -192,6 +203,13 @@ impl Server {
         addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Server, Error> {
+        let mut roots = Vec::new();
+        for root in &config.roots {
+            let root = std::fs::read(root)?;
+            let root = Certificate::from_pem(&root)?;
+            roots.push(root);
+        }
+
         let c = match config.resolve {
             ResolveSetting::Local {
                 priv_key,
@@ -206,31 +224,117 @@ impl Server {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }
         };
-        Server::listen(c, addr, log).await
+        Server::listen(c, config.attest, roots, addr, log).await
     }
 
     async fn listen(
         tls_config: ServerConfig,
+        attest_config: AttestConfig,
+        roots: Vec<Certificate>,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
         Ok(Server {
-            _log: log,
+            attest_config,
+            log,
             tcp_listener,
             tls_acceptor,
+            roots,
         })
     }
 
     pub async fn accept(
         &mut self,
-    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
+        corpus: &[Utf8PathBuf],
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr, PlatformId), Error>
+    {
+        // load corims into a set of ReferenceMeasurements
+        let mut corims = Vec::new();
+        for c in corpus {
+            corims.push(Corim::from_file(c)?);
+        }
+        let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
+
         let (stream, addr) = self.tcp_listener.accept().await?;
-        let stream = self.tls_acceptor.clone().accept(stream).await?;
+        let mut stream = self.tls_acceptor.clone().accept(stream).await?;
 
-        // TODO: Measurement attestations
+        // get Nonce from client
+        let client_nonce = recv_msg(&mut stream).await?;
+        let client_nonce = Nonce::try_from(client_nonce)?;
 
-        Ok((Stream::new(stream.into()), addr))
+        // generate & send Nonce to client
+        let nonce = Nonce::from_platform_rng()?;
+        send_msg(&mut stream, nonce.as_ref()).await?;
+
+        // get attestation & verify it before sending it
+        // The attesation protocol has an inherent race condition between
+        // getting the log and the attestation. We verify our own attestation
+        // before sending it to the challenger to fail as early as possible.
+        let attest_data = get_attest_data(&self.attest_config, &client_nonce)?;
+        dice_verifier::verify_attestation(
+            &attest_data.certs[0],
+            &attest_data.attestation,
+            &attest_data.log,
+            &client_nonce,
+        )?;
+
+        // get & verify client attestation cert chain
+        let client_cert_chain = recv_msg(&mut stream).await?;
+        let client_cert_chain = certs_from_der(&client_cert_chain)?;
+        let root = dice_verifier::verify_cert_chain(
+            &client_cert_chain,
+            Some(&self.roots),
+        )?;
+        let client_platform_id =
+            dice_mfg_msgs::PlatformId::try_from(&client_cert_chain)?;
+        info!(
+            self.log,
+            "Cert chain from peer \"{}\" verified against root \"{}\"",
+            client_platform_id.as_str()?,
+            root.tbs_certificate.subject,
+        );
+
+        // send server attestation cert chain to client
+        let cert_chain_der = certs_to_der(&attest_data.certs)?;
+        send_msg(&mut stream, &cert_chain_der).await?;
+
+        // get measurement log from client
+        let client_log = recv_msg(&mut stream).await?;
+        let (client_log, _): (Log, _) = hubpack::deserialize(&client_log)?;
+
+        // send server measurement log to client
+        let mut buf = vec![0u8; Log::MAX_SIZE];
+        let len = hubpack::serialize(&mut buf, &attest_data.log)?;
+        send_msg(&mut stream, &buf[..len]).await?;
+
+        // get attestation from client
+        let client_attestation = recv_msg(&mut stream).await?;
+        let (client_attestation, _): (Attestation, _) =
+            hubpack::deserialize(&client_attestation)?;
+
+        // verify client attestation
+        dice_verifier::verify_attestation(
+            &client_cert_chain[0],
+            &client_attestation,
+            &client_log,
+            &nonce,
+        )?;
+        info!(self.log, "Peer attestation verified");
+
+        // appraise measurements from client attestation against reference
+        // measurements
+        let measurements =
+            MeasurementSet::from_artifacts(&client_cert_chain, &client_log)?;
+        dice_verifier::verify_measurements(&measurements, &corpus)?;
+        info!(self.log, "Peer measurements appraised successfully");
+
+        // hubpack the attestation and send to client
+        let mut buf = vec![0u8; Attestation::MAX_SIZE];
+        let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
+        send_msg(&mut stream, &buf[..len]).await?;
+
+        Ok((Stream::new(stream.into()), addr, client_platform_id))
     }
 }

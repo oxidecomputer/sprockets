@@ -1,0 +1,15 @@
+// This KDL describes a rats_corim::Corim instance from
+// https://github.com/oxidecomputer/dice-util. Use the `attest-mock` tool to
+// produce a CBOR encoding of it.
+// ```shell
+// $ attest-mock this-file.kdl corim
+// ```
+vendor "test"
+tag-id "sp-tag-id"
+id "sp-id"
+
+measurement {
+    mkey "fwid-from-log"
+    algorithm 10
+    digest "be4df4e085175f3de0c8ac4837e1c2c9a34e8983209dac6b549e94154f7cdd9c"
+}
