@@ -1,3 +1,2 @@
 /target
-Cargo.lock
 /tls/test-keys/test-*.pem
