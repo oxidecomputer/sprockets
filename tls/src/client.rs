@@ -35,7 +35,7 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
-use x509_cert::Certificate;
+use x509_cert::{der::Decode, Certificate};
 
 impl ResolvesClientCert for CertResolver {
     fn resolve(
@@ -254,6 +254,22 @@ impl Client {
 
         let mut stream = connector.connect(dnsname, stream).await?;
 
+        // get server cert chain from connection
+        let (_, conn) = stream.get_ref();
+        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
+            let mut pki_path = Vec::new();
+            for der in tls_certs.iter() {
+                pki_path.push(Certificate::from_der(der).map_err(|_| {
+                    rustls::Error::InvalidCertificate(
+                        rustls::CertificateError::BadEncoding,
+                    )
+                })?)
+            }
+            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
+        } else {
+            return Err(Error::NoTQCerts);
+        };
+
         // send Nonce to server
         let nonce = Nonce::from_platform_rng()?;
         send_msg(&mut stream, nonce.as_ref()).await?;
@@ -291,6 +307,11 @@ impl Client {
             server_platform_id.as_str()?,
             root.tbs_certificate.subject,
         );
+
+        if tq_platform_id != server_platform_id {
+            return Err(Error::PlatformIdMismatch);
+        }
+        info!(log, "TQ & attestation cert chains agree on platform id");
 
         // send measurement log to server
         let mut buf = vec![0u8; Log::MAX_SIZE];

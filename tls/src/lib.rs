@@ -103,6 +103,12 @@ pub enum Error {
 
     #[error("Failed to verify measurements from peer attestation data: {0}")]
     AttestMeasurementsVerifier(#[from] dice_verifier::VerifyMeasurementsError),
+
+    #[error("No certs associated with connection")]
+    NoTQCerts,
+
+    #[error("TQ and attestation cert chains disagree on PlatformId")]
+    PlatformIdMismatch,
 }
 
 /// A type representing an established sprockets connection.
