@@ -32,7 +32,10 @@ use std::net::SocketAddrV6;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
-use x509_cert::{der::DecodePem, Certificate};
+use x509_cert::{
+    der::{Decode, DecodePem},
+    Certificate,
+};
 
 impl ResolvesServerCert for CertResolver {
     fn resolve(
@@ -260,6 +263,22 @@ impl Server {
         let (stream, addr) = self.tcp_listener.accept().await?;
         let mut stream = self.tls_acceptor.clone().accept(stream).await?;
 
+        // get PlatformId from server TLS / Trust Quorum cert chain
+        let (_, conn) = stream.get_ref();
+        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
+            let mut pki_path = Vec::new();
+            for der in tls_certs.iter() {
+                pki_path.push(Certificate::from_der(der).map_err(|_| {
+                    rustls::Error::InvalidCertificate(
+                        rustls::CertificateError::BadEncoding,
+                    )
+                })?)
+            }
+            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
+        } else {
+            return Err(Error::NoTQCerts);
+        };
+
         // get Nonce from client
         let client_nonce = recv_msg(&mut stream).await?;
         let client_nonce = Nonce::try_from(client_nonce)?;
@@ -294,6 +313,14 @@ impl Server {
             "Cert chain from peer \"{}\" verified against root \"{}\"",
             client_platform_id.as_str()?,
             root.tbs_certificate.subject,
+        );
+
+        if tq_platform_id != client_platform_id {
+            return Err(Error::PlatformIdMismatch);
+        }
+        info!(
+            self.log,
+            "TQ & attestation cert chains agree on platform id"
         );
 
         // send server attestation cert chain to client
