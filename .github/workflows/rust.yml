@@ -5,6 +5,10 @@ name: Rust
 
 on: [ push, pull_request, workflow_dispatch ]
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   check-style:
     runs-on: ubuntu-latest
@@ -40,9 +44,16 @@ jobs:
       - name: Report rustc version
         run: rustc --version
       - name: Install pki-playground
-        run: cargo install --locked --git https://github.com/oxidecomputer/pki-playground
+        run: |
+          cargo install --locked \
+            --git https://github.com/oxidecomputer/pki-playground \
+            --rev 0c121f9c1e84868e2331173107c2b7ed6f59b13a
       - name: Install attest-mock
-        run: cargo install --locked --git https://github.com/oxidecomputer/dice-util attest-mock
+        run: |
+          cargo install --locked \
+            --git https://github.com/oxidecomputer/dice-util \
+            --rev 4b408edc1d00f108ddf635415d783e6f12fe9641 \
+            attest-mock
       - name: Build
         run: cargo build --all-targets --verbose
       - name: Run tests
