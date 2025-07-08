@@ -9,15 +9,13 @@ use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
 use rustls::crypto::ring::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
 use slog::error;
-use std::io::prelude::*;
 use std::io::IoSlice;
 use std::marker::Unpin;
 
 #[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::{AsRawFd, RawFd};
 
-use anyhow::Context;
-use std::fs::File;
+use std::fs;
 use std::pin::Pin;
 use std::task::{self, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -49,10 +47,6 @@ pub enum Error {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-
-    // TODO: Return a more specific error / errors from dice-util
-    #[error("dice error: {0}")]
-    Dice(#[from] anyhow::Error),
 
     #[error("RotRequest: {0}")]
     RotRequest(#[from] ipcc::RotRequestError),
@@ -193,15 +187,8 @@ where
 }
 
 pub fn load_root_cert(path: &Utf8PathBuf) -> Result<Certificate, Error> {
-    let mut root_cert_pem = Vec::new();
-    File::open(path)
-        .with_context(|| format!("failed to open {}", &path))?
-        .read_to_end(&mut root_cert_pem)
-        .with_context(|| format!("failed to read {}", &path))?;
-    let root = Certificate::from_pem(&root_cert_pem).with_context(|| {
-        format!("failed to convert pem read from {}", &path)
-    })?;
-    Ok(root)
+    let root_cert_pem = fs::read(path)?;
+    Ok(Certificate::from_pem(&root_cert_pem)?)
 }
 
 fn certs_to_der(certs: &[Certificate]) -> Result<Vec<u8>, Error> {

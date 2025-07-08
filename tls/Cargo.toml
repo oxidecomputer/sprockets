@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 clap.workspace = true
-anyhow.workspace = true
 attest-data.workspace = true
 camino.workspace = true
 cfg-if.workspace = true
