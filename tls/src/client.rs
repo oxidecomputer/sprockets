@@ -18,7 +18,6 @@ use crate::{
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
-use dice_mfg_msgs::PlatformId;
 use dice_verifier::{
     Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
 };
@@ -35,7 +34,7 @@ use rustls::{
     ClientConfig, SignatureScheme,
 };
 use slog::{error, info};
-use x509_cert::Certificate;
+use x509_cert::{der::Decode, Certificate};
 
 impl ResolvesClientCert for CertResolver {
     fn resolve(
@@ -132,7 +131,7 @@ impl Client {
         addr: SocketAddrV6,
         corpus: Vec<Utf8PathBuf>,
         log: slog::Logger,
-    ) -> Result<(Stream<TcpStream>, PlatformId), Error> {
+    ) -> Result<Stream<TcpStream>, Error> {
         use x509_cert::der::DecodePem;
 
         let mut roots = Vec::new();
@@ -234,7 +233,7 @@ impl Client {
         reference_measurements: ReferenceMeasurements,
         addr: SocketAddrV6,
         log: slog::Logger,
-    ) -> Result<(Stream<TcpStream>, PlatformId), Error> {
+    ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
         // network, as we just learned of potential peers by IPv6 address from
@@ -253,6 +252,22 @@ impl Client {
         };
 
         let mut stream = connector.connect(dnsname, stream).await?;
+
+        // get server cert chain from connection
+        let (_, conn) = stream.get_ref();
+        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
+            let mut pki_path = Vec::new();
+            for der in tls_certs.iter() {
+                pki_path.push(Certificate::from_der(der).map_err(|_| {
+                    rustls::Error::InvalidCertificate(
+                        rustls::CertificateError::BadEncoding,
+                    )
+                })?)
+            }
+            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
+        } else {
+            return Err(Error::NoTQCerts);
+        };
 
         // send Nonce to server
         let nonce = Nonce::from_platform_rng()?;
@@ -292,6 +307,11 @@ impl Client {
             root.tbs_certificate.subject,
         );
 
+        if tq_platform_id != server_platform_id {
+            return Err(Error::PlatformIdMismatch);
+        }
+        info!(log, "TQ & attestation cert chains agree on platform id");
+
         // send measurement log to server
         let mut buf = vec![0u8; Log::MAX_SIZE];
         let log_len = hubpack::serialize(&mut buf, &attest_data.log)?;
@@ -330,7 +350,7 @@ impl Client {
         )?;
         info!(log, "Peer measurements appraised successfully");
 
-        Ok((Stream::new(stream.into()), server_platform_id))
+        Ok(Stream::new(stream.into(), server_platform_id))
     }
 }
 
