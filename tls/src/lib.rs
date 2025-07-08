@@ -10,7 +10,7 @@ use rustls::crypto::ring::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
 use slog::error;
 use std::io::prelude::*;
-use std::io::IoSlice;
+use std::io::{self, IoSlice};
 use std::marker::Unpin;
 
 #[cfg(any(unix, target_os = "wasi"))]
@@ -231,14 +231,31 @@ async fn recv_msg<T: AsyncReadExt + Unpin>(
     // to receive a message we first get its length that is a u32 serialized as
     // a little endian byte array
     let mut msg_len = [0u8; 4];
-    stream.read_exact(&mut msg_len).await?;
+    recv_buf(stream, &mut msg_len).await?;
     let msg_len = u32::from_le_bytes(msg_len).try_into()?;
 
     // with the length we can then get the message body
     let mut buf = vec![0u8; msg_len];
-    stream.read_exact(&mut buf).await?;
+    recv_buf(stream, &mut buf).await?;
 
     Ok(buf)
+}
+
+async fn recv_buf<T: AsyncReadExt + Unpin>(
+    stream: &mut T,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    let mut offset = 0;
+
+    while offset < buf.len() {
+        match stream.read(&mut buf[offset..]).await {
+            Ok(n) => offset += n,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(())
 }
 
 async fn send_msg<T: AsyncWriteExt + Unpin>(
@@ -248,9 +265,26 @@ async fn send_msg<T: AsyncWriteExt + Unpin>(
     // to send a message we first send the receiver its length as a u32
     // serialized as a little endian byte array
     let len: u32 = msg.len().try_into()?;
-    stream.write_all(&len.to_le_bytes()).await?;
+    send_buf(stream, &len.to_le_bytes()).await?;
     // then we send the message
-    Ok(stream.write_all(msg).await?)
+    send_buf(stream, msg).await
+}
+
+async fn send_buf<T: AsyncWriteExt + Unpin>(
+    stream: &mut T,
+    buf: &[u8],
+) -> Result<(), Error> {
+    let mut offset = 0;
+
+    while offset < buf.len() {
+        match stream.write(&buf[offset..]).await {
+            Ok(n) => offset += n,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(())
 }
 
 /// Return a common [`CryptoProvider`] for use by both client and server.

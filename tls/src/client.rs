@@ -124,9 +124,6 @@ impl Client {
     /// - the attestation process is carried out with peer credentials
     ///   authenticated by the roots from the `config` and peer measurements
     ///   appraised using the provided `corpus`
-    ///
-    /// NOTE: This function is not cancel safe and should be run in a dedicated
-    /// task.
     pub async fn connect(
         config: SprocketsConfig,
         addr: SocketAddrV6,
