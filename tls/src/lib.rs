@@ -5,6 +5,7 @@
 //! TLS based connections
 
 use camino::Utf8PathBuf;
+use dice_mfg_msgs::PlatformId;
 use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
 use rustls::crypto::ring::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
@@ -122,16 +123,24 @@ pub enum Error {
 ///      over the TLS session.
 pub struct Stream<T> {
     inner: TlsStream<T>,
+    platform_id: PlatformId,
 }
 
 impl<T> Stream<T> {
-    pub fn new(tls_stream: TlsStream<T>) -> Stream<T> {
-        Stream { inner: tls_stream }
+    pub fn new(tls_stream: TlsStream<T>, pid: PlatformId) -> Stream<T> {
+        Stream {
+            inner: tls_stream,
+            platform_id: pid,
+        }
     }
 
     // Return the raw tls stream.
     pub fn inner(&mut self) -> &mut TlsStream<T> {
         &mut self.inner
+    }
+
+    pub fn peer_platform_id(&self) -> &PlatformId {
+        &self.platform_id
     }
 }
 
@@ -348,7 +357,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let (mut stream, _, _) =
+            let (mut stream, _) =
                 server.accept(corpus.as_slice()).await.unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
@@ -360,7 +369,7 @@ mod tests {
         });
 
         // Loop until we succesfully connect
-        let (mut stream, _) = loop {
+        let mut stream = loop {
             let client_config = keys::SprocketsConfig {
                 attest: keys::AttestConfig::Local {
                     priv_key: pki_keydir.join("test-alias-2.key.pem"),
@@ -380,10 +389,10 @@ mod tests {
                 pki_keydir.join("corim-sp.cbor"),
             ];
 
-            if let Ok((stream, platform_id)) =
+            if let Ok(stream) =
                 Client::connect(client_config, addr, corpus, log.clone()).await
             {
-                break (stream, platform_id);
+                break stream;
             }
             sleep(Duration::from_millis(1)).await;
         };

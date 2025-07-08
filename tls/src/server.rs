@@ -14,7 +14,6 @@ use crate::{
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
-use dice_mfg_msgs::PlatformId;
 use dice_verifier::{
     Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
 };
@@ -251,8 +250,7 @@ impl Server {
     pub async fn accept(
         &mut self,
         corpus: &[Utf8PathBuf],
-    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr, PlatformId), Error>
-    {
+    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr), Error> {
         // load corims into a set of ReferenceMeasurements
         let mut corims = Vec::new();
         for c in corpus {
@@ -362,6 +360,6 @@ impl Server {
         let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
         send_msg(&mut stream, &buf[..len]).await?;
 
-        Ok((Stream::new(stream.into()), addr, client_platform_id))
+        Ok((Stream::new(stream.into(), client_platform_id), addr))
     }
 }
