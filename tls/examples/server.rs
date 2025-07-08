@@ -93,9 +93,8 @@ async fn main() {
         .unwrap();
 
     loop {
-        let (stream, _, platform_id) =
-            server.accept(args.corpus.as_slice()).await.unwrap();
-        let platform_id = platform_id.as_str().unwrap();
+        let (stream, _) = server.accept(args.corpus.as_slice()).await.unwrap();
+        let platform_id = stream.peer_platform_id().as_str().unwrap();
         info!(log, "connected to attested peer: {platform_id}");
         let (mut reader, mut writer) = split(stream);
         let n = copy(&mut reader, &mut writer).await.unwrap();
