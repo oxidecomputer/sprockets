@@ -11,14 +11,15 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 use crate::keys::{get_attest_data, AttestConfig, ResolveSetting};
-use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+use crate::keys::{
+    CertResolver, RotCertVerifier, SprocketsConfig, SprocketsResult,
+};
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
     send_msg,
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
-use dice_mfg_msgs::PlatformId;
 use dice_verifier::{
     Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
 };
@@ -132,7 +133,7 @@ impl Client {
         addr: SocketAddrV6,
         corpus: Vec<Utf8PathBuf>,
         log: slog::Logger,
-    ) -> Result<(Stream<TcpStream>, PlatformId), Error> {
+    ) -> Result<(Stream<TcpStream>, SprocketsResult), Error> {
         use x509_cert::der::DecodePem;
 
         let mut roots = Vec::new();
@@ -234,7 +235,7 @@ impl Client {
         reference_measurements: ReferenceMeasurements,
         addr: SocketAddrV6,
         log: slog::Logger,
-    ) -> Result<(Stream<TcpStream>, PlatformId), Error> {
+    ) -> Result<(Stream<TcpStream>, SprocketsResult), Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
         // network, as we just learned of potential peers by IPv6 address from
@@ -324,13 +325,20 @@ impl Client {
         // measurements
         let measurements =
             MeasurementSet::from_artifacts(&server_cert_chain, &server_log)?;
-        dice_verifier::verify_measurements(
+        let result = match dice_verifier::verify_measurements(
             &measurements,
             &reference_measurements,
-        )?;
-        info!(log, "Peer measurements appraised successfully");
-
-        Ok((Stream::new(stream.into()), server_platform_id))
+        ) {
+            Ok(()) => {
+                info!(log, "Peer measurements appraised successfully");
+                SprocketsResult::MeasurementsVerified(server_platform_id)
+            }
+            Err(e) => {
+                info!(log, "Peer measurements appraisal failed {}", e);
+                SprocketsResult::MeasurementsVerified(server_platform_id)
+            }
+        };
+        Ok((Stream::new(stream.into()), result))
     }
 }
 

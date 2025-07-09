@@ -6,7 +6,7 @@
 
 use crate::keys::{
     get_attest_data, AttestConfig, CertResolver, ResolveSetting,
-    RotCertVerifier, SprocketsConfig,
+    RotCertVerifier, SprocketsConfig, SprocketsResult,
 };
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
@@ -14,7 +14,6 @@ use crate::{
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
-use dice_mfg_msgs::PlatformId;
 use dice_verifier::{
     Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
 };
@@ -248,8 +247,10 @@ impl Server {
     pub async fn accept(
         &mut self,
         corpus: &[Utf8PathBuf],
-    ) -> Result<(Stream<TcpStream>, core::net::SocketAddr, PlatformId), Error>
-    {
+    ) -> Result<
+        (Stream<TcpStream>, core::net::SocketAddr, SprocketsResult),
+        Error,
+    > {
         // load corims into a set of ReferenceMeasurements
         let mut corims = Vec::new();
         for c in corpus {
@@ -327,14 +328,26 @@ impl Server {
         // measurements
         let measurements =
             MeasurementSet::from_artifacts(&client_cert_chain, &client_log)?;
-        dice_verifier::verify_measurements(&measurements, &corpus)?;
-        info!(self.log, "Peer measurements appraised successfully");
+        let result =
+            match dice_verifier::verify_measurements(&measurements, &corpus) {
+                Ok(()) => {
+                    info!(self.log, "Peer measurements appraised successfully");
+                    SprocketsResult::MeasurementsVerified(client_platform_id)
+                }
+                Err(e) => {
+                    info!(
+                        self.log,
+                        "Peer measurements appraisal failed: {}", e
+                    );
+                    SprocketsResult::MeasurementsUnverified(client_platform_id)
+                }
+            };
 
         // hubpack the attestation and send to client
         let mut buf = vec![0u8; Attestation::MAX_SIZE];
         let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
         send_msg(&mut stream, &buf[..len]).await?;
 
-        Ok((Stream::new(stream.into()), addr, client_platform_id))
+        Ok((Stream::new(stream.into()), addr, result))
     }
 }
