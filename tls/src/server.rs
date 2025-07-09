@@ -352,14 +352,26 @@ impl Server {
         // measurements
         let measurements =
             MeasurementSet::from_artifacts(&client_cert_chain, &client_log)?;
-        dice_verifier::verify_measurements(&measurements, &corpus)?;
-        info!(self.log, "Peer measurements appraised successfully");
+        let result =
+            match dice_verifier::verify_measurements(&measurements, &corpus) {
+                Ok(()) => {
+                    info!(self.log, "Peer measurements appraised successfully");
+                    true
+                }
+                Err(e) => {
+                    info!(
+                        self.log,
+                        "Peer measurements appraisal failed: {}", e
+                    );
+                    false
+                }
+            };
 
         // hubpack the attestation and send to client
         let mut buf = vec![0u8; Attestation::MAX_SIZE];
         let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
         send_msg(&mut stream, &buf[..len]).await?;
 
-        Ok((Stream::new(stream.into(), client_platform_id), addr))
+        Ok((Stream::new(stream.into(), client_platform_id, result), addr))
     }
 }

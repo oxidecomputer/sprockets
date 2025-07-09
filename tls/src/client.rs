@@ -344,13 +344,20 @@ impl Client {
         // measurements
         let measurements =
             MeasurementSet::from_artifacts(&server_cert_chain, &server_log)?;
-        dice_verifier::verify_measurements(
+        let result = match dice_verifier::verify_measurements(
             &measurements,
             &reference_measurements,
-        )?;
-        info!(log, "Peer measurements appraised successfully");
-
-        Ok(Stream::new(stream.into(), server_platform_id))
+        ) {
+            Ok(()) => {
+                info!(log, "Peer measurements appraised successfully");
+                true
+            }
+            Err(e) => {
+                info!(log, "Peer measurements appraisal failed {}", e);
+                false
+            }
+        };
+        Ok(Stream::new(stream.into(), server_platform_id, result))
     }
 }
 
