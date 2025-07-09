@@ -151,7 +151,7 @@ impl<T> Stream<T> {
         &self.platform_id
     }
 
-    pub fn appraisal_status(&self) -> bool {
+    pub fn appraisal_success(&self) -> bool {
         self.corpus_appraisal_success
     }
 }
@@ -504,5 +504,85 @@ mod tests {
         // Wait for the other side of the connection to receive and assert the
         // message
         let _ = done_rx.await;
+    }
+
+    #[tokio::test]
+    async fn unattested_client() {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let log = logger();
+
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
+
+        let server_config = keys::SprocketsConfig {
+            attest: keys::AttestConfig::Local {
+                priv_key: pki_keydir.join("test-alias-1.key.pem"),
+                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
+                log: pki_keydir.join("log.bin"),
+            },
+            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
+            resolve: keys::ResolveSetting::Local {
+                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
+                cert_chain: pki_keydir
+                    .join("test-sprockets-auth-1.certlist.pem"),
+            },
+        };
+
+        // Message to send over TLS
+        const MSG: &str = "Hello Joe";
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let log2 = log.clone();
+        let corpus = vec![
+            pki_keydir.join("corim-rot.cbor"),
+            pki_keydir.join("corim-sp.cbor"),
+        ];
+
+        let handle = tokio::spawn(async move {
+            let mut server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            // We never expect this to succeed
+            let _ = match server.accept(corpus.as_slice()).await {
+                Ok(_) => panic!("This should not succed"),
+                Err(_) => done_tx.send(()),
+            };
+        });
+
+        let client_config = client::Client::new_tls_local_client_config(
+            pki_keydir.join("test-sprockets-auth-2.key.pem"),
+            pki_keydir.join("test-sprockets-auth-2.certlist.pem"),
+            vec![pki_keydir.join("test-root-a.cert.pem")],
+            log,
+        )
+        .unwrap();
+
+        let dnsname =
+            rustls::pki_types::ServerName::try_from("unknown.com").unwrap();
+
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+            client_config,
+        ));
+        let stream = loop {
+            if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+                break s;
+            };
+            sleep(Duration::from_millis(1)).await;
+        };
+
+        let mut stream = connector.connect(dnsname, stream).await.unwrap();
+
+        stream.write_all(MSG.as_bytes()).await.unwrap();
+
+        // Trigger an EOF so that `read_to_string` in the acceptor task
+        // completes.
+        stream.shutdown().await.unwrap();
+
+        // Wait for the other side of the connection to receive and assert the
+        // message
+        let _ = done_rx.await;
+
+        handle.await.unwrap();
     }
 }

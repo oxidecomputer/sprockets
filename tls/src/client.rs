@@ -167,7 +167,8 @@ impl Client {
             .await
     }
 
-    fn new_tls_local_client_config(
+    // For some testing shenanigans
+    pub(crate) fn new_tls_local_client_config(
         priv_key: Utf8PathBuf,
         cert_chain: Utf8PathBuf,
         roots: Vec<Utf8PathBuf>,
