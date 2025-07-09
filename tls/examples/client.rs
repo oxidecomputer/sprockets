@@ -93,6 +93,7 @@ async fn main() {
         Client::connect(client_config, addr, args.corpus, log.clone())
             .await
             .unwrap();
+    let platform_id = platform_id.to_platform_id();
     let platform_id = platform_id.as_str().unwrap();
     info!(log, "connected to attested peer: {platform_id}");
 

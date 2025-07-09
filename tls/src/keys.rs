@@ -22,6 +22,7 @@ use std::iter;
 
 use crate::ipcc::Ipcc;
 use crate::Error;
+use dice_mfg_msgs::PlatformId;
 use serde::Deserialize;
 use std::{fs::File, sync::Arc};
 use x509_cert::{
@@ -395,6 +396,22 @@ pub enum AttestConfig {
         cert_chain: Utf8PathBuf,
         log: Utf8PathBuf,
     },
+}
+
+/// The result of measurement appraisal
+#[derive(Clone, Debug, Deserialize)]
+pub enum SprocketsResult {
+    MeasurementsVerified(PlatformId),
+    MeasurementsUnverified(PlatformId),
+}
+
+impl SprocketsResult {
+    pub fn to_platform_id(&self) -> PlatformId {
+        match *self {
+            SprocketsResult::MeasurementsVerified(v) => v,
+            SprocketsResult::MeasurementsUnverified(v) => v,
+        }
+    }
 }
 
 /// An attestation from the RoT and, provided the appropriate root, the
