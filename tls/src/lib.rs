@@ -124,13 +124,21 @@ pub enum Error {
 pub struct Stream<T> {
     inner: TlsStream<T>,
     platform_id: PlatformId,
+    // Represents whether or not the appraisal against the
+    // measurement corpus succeeded
+    corpus_appraisal_success: bool,
 }
 
 impl<T> Stream<T> {
-    pub fn new(tls_stream: TlsStream<T>, pid: PlatformId) -> Stream<T> {
+    pub fn new(
+        tls_stream: TlsStream<T>,
+        pid: PlatformId,
+        corpus_appraisal_success: bool,
+    ) -> Stream<T> {
         Stream {
             inner: tls_stream,
             platform_id: pid,
+            corpus_appraisal_success,
         }
     }
 
@@ -141,6 +149,10 @@ impl<T> Stream<T> {
 
     pub fn peer_platform_id(&self) -> &PlatformId {
         &self.platform_id
+    }
+
+    pub fn appraisal_status(&self) -> bool {
+        self.corpus_appraisal_success
     }
 }
 
@@ -318,6 +330,92 @@ mod tests {
         "#;
 
         let _: keys::SprocketsConfig = toml::from_str(local).unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_corpus() {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        let log = logger();
+
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46457").unwrap();
+
+        let server_config = keys::SprocketsConfig {
+            attest: keys::AttestConfig::Local {
+                priv_key: pki_keydir.join("test-alias-1.key.pem"),
+                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
+                log: pki_keydir.join("log.bin"),
+            },
+            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
+            resolve: keys::ResolveSetting::Local {
+                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
+                cert_chain: pki_keydir
+                    .join("test-sprockets-auth-1.certlist.pem"),
+            },
+        };
+
+        // Message to send over TLS
+        const MSG: &str = "Hello Joe";
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let log2 = log.clone();
+        let corpus = vec![
+            // we don't use a corpus
+        ];
+
+        tokio::spawn(async move {
+            let mut server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            let (mut stream, _) =
+                server.accept(corpus.as_slice()).await.unwrap();
+            let mut buf = String::new();
+            stream.read_to_string(&mut buf).await.unwrap();
+
+            assert_eq!(buf.as_str(), MSG);
+
+            // Inform the main task that the test is complete.
+            let _ = done_tx.send(());
+        });
+
+        // Loop until we succesfully connect
+        let mut stream = loop {
+            let client_config = keys::SprocketsConfig {
+                attest: keys::AttestConfig::Local {
+                    priv_key: pki_keydir.join("test-alias-2.key.pem"),
+                    cert_chain: pki_keydir.join("test-alias-2.certlist.pem"),
+                    log: pki_keydir.join("log.bin"),
+                },
+                roots: vec![pki_keydir.join("test-root-a.cert.pem")],
+                resolve: keys::ResolveSetting::Local {
+                    priv_key: pki_keydir.join("test-sprockets-auth-2.key.pem"),
+                    cert_chain: pki_keydir
+                        .join("test-sprockets-auth-2.certlist.pem"),
+                },
+            };
+
+            let corpus = vec![
+                // We don't use a corpus
+            ];
+
+            if let Ok(stream) =
+                Client::connect(client_config, addr, corpus, log.clone()).await
+            {
+                break stream;
+            }
+            sleep(Duration::from_millis(1)).await;
+        };
+
+        stream.write_all(MSG.as_bytes()).await.unwrap();
+
+        // Trigger an EOF so that `read_to_string` in the acceptor task
+        // completes.
+        stream.shutdown().await.unwrap();
+
+        // Wait for the other side of the connection to receive and assert the
+        // message
+        let _ = done_rx.await;
     }
 
     #[tokio::test]
