@@ -121,12 +121,10 @@ impl CertResolver {
             Certificate::load_pem_chain(&std::fs::read(cert_chain)?)?;
 
         Ok(Arc::new(CertifiedKey::new(
-            // The chain needs to be in reverse order
-            // - Convert all our certs to der
-            // - Convert the DER into the format rustls expects
+            // Convert certs to der and transform into the type expected by
+            // rustls
             pem_chain
                 .into_iter()
-                .rev()
                 .map(|x| x.to_der())
                 .collect::<Result<Vec<Vec<u8>>, _>>()?
                 .into_iter()
