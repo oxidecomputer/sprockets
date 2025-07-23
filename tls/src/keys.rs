@@ -56,46 +56,27 @@ impl CertResolver {
     fn load_ipcc_key(&self) -> Result<Arc<CertifiedKey>, crate::Error> {
         let ipcc = Ipcc::new().map_err(crate::Error::RotRequest)?;
         let cert_chain_bytes = ipcc.rot_get_tq_cert_chain()?;
-        let mut idx = 0;
-        let mut der_vec = vec![];
-        // The cert chain returned is a concatenated series of DER certs.
-        // rustls wants each cert as a member of a `Vec`. We don't know
-        // the length of each cert so we have to parse the DER to find it.
-        //
-        // Note we could just return the length of each cert but that
-        // either invovles more IPCC calls or more work on the RoT/SP.
-        // This code runs on the Big CPU so we can do the Big Work here.
-        // A note for our certificate manufacturing v2 would be to just
-        // include the length of each cert along with the DER
-        while idx < cert_chain_bytes.len() {
-            let reader = der::SliceReader::new(&cert_chain_bytes[idx..])
-                .map_err(crate::Error::Der)?;
-            let header = reader.peek_header().map_err(crate::Error::Der)?;
-            // DER certificates are supposed to be a `Sequence`.
-            // We could check that here but we're going to get better
-            // error messages by letting the cert parsing code say
-            // exactly what went wrong
-            let seq_len: usize =
-                header.length.try_into().map_err(crate::Error::Der)?;
-            let tag_len: usize = header
-                .encoded_len()
-                .map_err(crate::Error::Der)?
-                .try_into()
-                .map_err(crate::Error::Der)?;
-            // Total len = length from the sequence plus the tag itself
-            let end = idx + seq_len + tag_len;
 
-            der_vec.push(CertificateDer::from(
-                cert_chain_bytes[idx..end].to_vec(),
-            ));
-            idx += seq_len + tag_len;
-        }
-        for c in &der_vec {
-            // Apart from printing out a bit of certificate information this
-            // also serves as a validation on the DER certificate.
-            let cert = Certificate::from_der(c).map_err(crate::Error::Der)?;
+        // The cert chain returned is a concatenated series of DER certs.
+        // rustls wants each cert as a member of a `Vec`. This loop uses a
+        // `SliceReader` to walk the concatinated DER encoded cert chain parsing
+        // each into an `x509_cert::Certificate` to ensure it's actually a cert.
+        // It then collects the DER for each into the
+        // `Vec<rustls::CertificateDer>` expected by rustls.
+        let mut der_vec = vec![];
+        let mut reader = der::SliceReader::new(&cert_chain_bytes)?;
+        while !reader.is_finished() {
+            let start: usize =
+                reader.position().try_into().map_err(crate::Error::Der)?;
+            let cert: Certificate = reader.decode()?;
             info!(self.log, "Certificate => {}", cert.tbs_certificate.subject);
+            let end: usize =
+                reader.position().try_into().map_err(crate::Error::Der)?;
+            der_vec.push(CertificateDer::from(
+                cert_chain_bytes[start..end].to_vec(),
+            ));
         }
+
         // TODO pass the existing ipcc handle. Right now we can't because
         // we need to review sync/send/copy/clone for libipcc
         Ok(Arc::new(CertifiedKey::new(der_vec, Arc::new(IpccKey {}))))
