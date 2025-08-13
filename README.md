@@ -24,6 +24,9 @@ The protocol used to carry out this process is roughly:
 %% sequence diagram describing the protocol used to exchange attestation
 %% evidence between client & server
 sequenceDiagram
+    Client->>Server: Send version request
+    Server->>Client: Reply with version
+    Client->>Server: Reply with version ACK (or give up)
     Client->>Client: Generate Nonce
     Server->>Server: Generate Nonce
     Client->>Server: Nonce
