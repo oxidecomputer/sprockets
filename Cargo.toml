@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "tls",
+    "xtask",
 ]
 
 default-members = [
