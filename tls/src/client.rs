@@ -14,7 +14,8 @@ use crate::keys::{get_attest_data, AttestConfig, ResolveSetting};
 use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
-    send_msg,
+    send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
+    PREVIOUS_PROTOCOL_VERSION,
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
@@ -269,6 +270,45 @@ impl Client {
         } else {
             return Err(Error::NoTQCerts);
         };
+
+        // send version to the server
+        send_msg(&mut stream, &CURRENT_PROTOCOL_VERSION.to_le_bytes()).await?;
+
+        // get version response from server, we expect it to be
+        // hubpacked
+        let version_response = recv_msg(&mut stream).await?;
+        let (version, _): (ProtocolResult, _) =
+            hubpack::deserialize(&version_response)?;
+
+        let version = match version {
+            Ok(v) => v,
+            // Not much we can do?
+            Err(_) => return Err(Error::ProtocolVersion),
+        };
+
+        if version == CURRENT_PROTOCOL_VERSION {
+            // we're good to go
+            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
+            let resp: ProtocolRequestAck = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else if version == PREVIOUS_PROTOCOL_VERSION {
+            // Also good
+            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
+            let resp: ProtocolRequestAck = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else {
+            // Farewell
+            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
+            let resp: ProtocolRequestAck = Err(());
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+            return Err(Error::ProtocolVersion);
+        }
+
+        // Right now all protocols are the same
+        info!(log, "Running with protocol version {version}");
 
         // send Nonce to server
         let nonce = Nonce::from_platform_rng()?;
