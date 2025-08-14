@@ -111,6 +111,15 @@ pub enum Error {
 
     #[error("TQ and attestation cert chains disagree on PlatformId")]
     PlatformIdMismatch,
+
+    #[error("Cannot support requested protocol version")]
+    ProtocolVersion,
+
+    #[error("Client didn't request the proper version")]
+    ClientMismatch,
+
+    #[error("Client gave up negotating the version")]
+    ClientGaveUp,
 }
 
 /// A type representing an established sprockets connection.
@@ -250,6 +259,17 @@ fn certs_from_der(buf: &[u8]) -> Result<Vec<Certificate>, Error> {
 
     Ok(certs)
 }
+
+// Response from the server, either the same version back, version - 1
+// or an error if there is no way the server can support this request
+type ProtocolResult = Result<u32, ()>;
+
+// Message from client acking the version or telling the server it's
+// giving up
+type ProtocolRequestAck = Result<u32, ()>;
+
+const CURRENT_PROTOCOL_VERSION: u32 = 2;
+const PREVIOUS_PROTOCOL_VERSION: u32 = CURRENT_PROTOCOL_VERSION - 1;
 
 async fn recv_msg<T: AsyncReadExt + Unpin>(
     stream: &mut T,
