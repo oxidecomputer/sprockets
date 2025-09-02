@@ -10,7 +10,8 @@ use crate::keys::{
 };
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
-    send_msg,
+    send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
+    PREVIOUS_PROTOCOL_VERSION,
 };
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
@@ -276,6 +277,52 @@ impl Server {
         } else {
             return Err(Error::NoTQCerts);
         };
+
+        // get version from the client
+        let version_bytes = recv_msg(&mut stream).await?;
+        let version =
+            u32::from_le_bytes(version_bytes[..4].try_into().unwrap());
+
+        if version == CURRENT_PROTOCOL_VERSION {
+            // we're good to go
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else if version == PREVIOUS_PROTOCOL_VERSION {
+            // We eventually want to support older protocol
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else {
+            // We can't deal with this
+            // We eventually want to support older protocol
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Err(());
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+            // Client has given us something bad, time to give up
+            return Err(Error::ProtocolVersion);
+        }
+
+        // Wait for the protocol ACK
+        let protocol_ack_bytes = recv_msg(&mut stream).await?;
+        let (protocol_ack, _): (ProtocolRequestAck, _) =
+            hubpack::deserialize(&protocol_ack_bytes)?;
+
+        match protocol_ack {
+            Ok(v) => {
+                if v != version {
+                    // this isn't right...
+                    return Err(Error::ClientMismatch);
+                }
+            }
+            Err(_) => return Err(Error::ClientGaveUp),
+        }
+
+        // Right now all protocols are the same
+        info!(self.log, "Running with protocol version {version}");
 
         // get Nonce from client
         let client_nonce = recv_msg(&mut stream).await?;
