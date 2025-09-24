@@ -320,6 +320,8 @@ mod tests {
     use slog::Drain;
     use std::net::SocketAddrV6;
     use std::str::FromStr;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::sleep;
@@ -329,6 +331,39 @@ mod tests {
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = std::sync::Mutex::new(drain).fuse();
         slog::Logger::root(drain, slog::o!("component" => "sprockets"))
+    }
+
+    pub fn pki_keydir() -> Utf8PathBuf {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+        pki_keydir
+    }
+
+    fn local_config(n: usize) -> keys::SprocketsConfig {
+        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pki_keydir.push("test-keys");
+
+        let attest_priv_key =
+            pki_keydir.join(format!("test-alias-{n}.key.pem"));
+        let attest_cert_chain =
+            pki_keydir.join(format!("test-alias-{n}.certlist.pem"));
+        let resolve_priv_key =
+            pki_keydir.join(format!("test-sprockets-auth-{n}.key.pem"));
+        let resolve_cert_chain =
+            pki_keydir.join(format!("test-sprockets-auth-{n}.certlist.pem"));
+
+        keys::SprocketsConfig {
+            attest: keys::AttestConfig::Local {
+                priv_key: attest_priv_key,
+                cert_chain: attest_cert_chain,
+                log: pki_keydir.join("log.bin"),
+            },
+            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
+            resolve: keys::ResolveSetting::Local {
+                priv_key: resolve_priv_key,
+                cert_chain: resolve_cert_chain,
+            },
+        }
     }
 
     #[tokio::test]
@@ -353,25 +388,8 @@ mod tests {
 
     #[tokio::test]
     async fn no_corpus() {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
         let log = logger();
-
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46457").unwrap();
-
-        let server_config = keys::SprocketsConfig {
-            attest: keys::AttestConfig::Local {
-                priv_key: pki_keydir.join("test-alias-1.key.pem"),
-                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
-                log: pki_keydir.join("log.bin"),
-            },
-            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
-            resolve: keys::ResolveSetting::Local {
-                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
-                cert_chain: pki_keydir
-                    .join("test-sprockets-auth-1.certlist.pem"),
-            },
-        };
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -383,12 +401,13 @@ mod tests {
         ];
 
         tokio::spawn(async move {
-            let mut server = Server::new(server_config, addr, log2.clone())
+            let server_config = local_config(1);
+            let server = Server::new(server_config, addr, log2.clone())
                 .await
                 .unwrap();
 
             let (mut stream, _) =
-                server.accept(corpus.as_slice()).await.unwrap();
+                server.accept(corpus.clone()).await.await.unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
 
@@ -400,19 +419,7 @@ mod tests {
 
         // Loop until we succesfully connect
         let mut stream = loop {
-            let client_config = keys::SprocketsConfig {
-                attest: keys::AttestConfig::Local {
-                    priv_key: pki_keydir.join("test-alias-2.key.pem"),
-                    cert_chain: pki_keydir.join("test-alias-2.certlist.pem"),
-                    log: pki_keydir.join("log.bin"),
-                },
-                roots: vec![pki_keydir.join("test-root-a.cert.pem")],
-                resolve: keys::ResolveSetting::Local {
-                    priv_key: pki_keydir.join("test-sprockets-auth-2.key.pem"),
-                    cert_chain: pki_keydir
-                        .join("test-sprockets-auth-2.certlist.pem"),
-                },
-            };
+            let client_config = local_config(2);
 
             let corpus = vec![
                 // We don't use a corpus
@@ -439,25 +446,10 @@ mod tests {
 
     #[tokio::test]
     async fn basic() {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
         let log = logger();
-
+        let pki_keydir = pki_keydir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
-
-        let server_config = keys::SprocketsConfig {
-            attest: keys::AttestConfig::Local {
-                priv_key: pki_keydir.join("test-alias-1.key.pem"),
-                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
-                log: pki_keydir.join("log.bin"),
-            },
-            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
-            resolve: keys::ResolveSetting::Local {
-                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
-                cert_chain: pki_keydir
-                    .join("test-sprockets-auth-1.certlist.pem"),
-            },
-        };
+        let server_config = local_config(1);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -470,12 +462,12 @@ mod tests {
         ];
 
         tokio::spawn(async move {
-            let mut server = Server::new(server_config, addr, log2.clone())
+            let server = Server::new(server_config, addr, log2.clone())
                 .await
                 .unwrap();
 
             let (mut stream, _) =
-                server.accept(corpus.as_slice()).await.unwrap();
+                server.accept(corpus.clone()).await.await.unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
 
@@ -487,19 +479,7 @@ mod tests {
 
         // Loop until we succesfully connect
         let mut stream = loop {
-            let client_config = keys::SprocketsConfig {
-                attest: keys::AttestConfig::Local {
-                    priv_key: pki_keydir.join("test-alias-2.key.pem"),
-                    cert_chain: pki_keydir.join("test-alias-2.certlist.pem"),
-                    log: pki_keydir.join("log.bin"),
-                },
-                roots: vec![pki_keydir.join("test-root-a.cert.pem")],
-                resolve: keys::ResolveSetting::Local {
-                    priv_key: pki_keydir.join("test-sprockets-auth-2.key.pem"),
-                    cert_chain: pki_keydir
-                        .join("test-sprockets-auth-2.certlist.pem"),
-                },
-            };
+            let client_config = local_config(2);
 
             let corpus = vec![
                 pki_keydir.join("corim-rot.cbor"),
@@ -527,25 +507,11 @@ mod tests {
 
     #[tokio::test]
     async fn unattested_client() {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
         let log = logger();
-
+        let pki_keydir = pki_keydir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
 
-        let server_config = keys::SprocketsConfig {
-            attest: keys::AttestConfig::Local {
-                priv_key: pki_keydir.join("test-alias-1.key.pem"),
-                cert_chain: pki_keydir.join("test-alias-1.certlist.pem"),
-                log: pki_keydir.join("log.bin"),
-            },
-            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
-            resolve: keys::ResolveSetting::Local {
-                priv_key: pki_keydir.join("test-sprockets-auth-1.key.pem"),
-                cert_chain: pki_keydir
-                    .join("test-sprockets-auth-1.certlist.pem"),
-            },
-        };
+        let server_config = local_config(1);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -558,12 +524,12 @@ mod tests {
         ];
 
         let handle = tokio::spawn(async move {
-            let mut server = Server::new(server_config, addr, log2.clone())
+            let server = Server::new(server_config, addr, log2.clone())
                 .await
                 .unwrap();
 
             // We never expect this to succeed
-            let _ = match server.accept(corpus.as_slice()).await {
+            let _ = match server.accept(corpus.clone()).await.await {
                 Ok(_) => panic!("This should not succed"),
                 Err(_) => done_tx.send(()),
             };
@@ -603,5 +569,94 @@ mod tests {
         let _ = done_rx.await;
 
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn spawn_accept() {
+        let log = logger();
+        let pki_keydir = pki_keydir();
+
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46466").unwrap();
+
+        let server_config = local_config(1);
+
+        // Message to send over TLS
+        const MSG: &str = "Hello Joe";
+
+        let log2 = log.clone();
+        let corpus = vec![
+            pki_keydir.join("corim-rot.cbor"),
+            pki_keydir.join("corim-sp.cbor"),
+        ];
+
+        // Accept connections from `max_connections` clients in different tasks
+        //
+        // For this test, the clients all share a set of keys, because
+        // we only generate 2 sets of keys from the KDL.
+        let max_connections = 3;
+        let done_count = Arc::new(AtomicUsize::new(0));
+        let dc2 = done_count.clone();
+        tokio::spawn(async move {
+            let server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            for _ in 0..max_connections {
+                let accept_fut = server.accept(corpus.clone()).await;
+                let done_count = dc2.clone();
+                tokio::spawn(async move {
+                    let (mut stream, _) = accept_fut.await.unwrap();
+                    let mut buf = String::new();
+                    stream.read_to_string(&mut buf).await.unwrap();
+
+                    assert_eq!(buf.as_str(), MSG);
+                    done_count
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                });
+            }
+        });
+
+        // Spawn `max_connections` tasks to concurrently connect
+        for _ in 0..max_connections {
+            let pki_keydir = pki_keydir.clone();
+            let log = log.clone();
+            tokio::spawn(async move {
+                // Loop until we succesfully connect
+                let mut stream = loop {
+                    let client_config = local_config(2);
+
+                    let corpus = vec![
+                        pki_keydir.join("corim-rot.cbor"),
+                        pki_keydir.join("corim-sp.cbor"),
+                    ];
+
+                    if let Ok(stream) = Client::connect(
+                        client_config,
+                        addr,
+                        corpus,
+                        log.clone(),
+                    )
+                    .await
+                    {
+                        break stream;
+                    }
+                    sleep(Duration::from_millis(1)).await;
+                };
+
+                stream.write_all(MSG.as_bytes()).await.unwrap();
+
+                // Trigger an EOF so that `read_to_string` in the acceptor task
+                // completes.
+                stream.shutdown().await.unwrap();
+            });
+        }
+
+        // Wait each spawned server task to receive and assert the message from
+        // a single client.
+        while done_count.load(std::sync::atomic::Ordering::Relaxed)
+            != max_connections
+        {
+            sleep(Duration::from_millis(1)).await;
+        }
     }
 }

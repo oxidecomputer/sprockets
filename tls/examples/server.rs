@@ -88,12 +88,13 @@ async fn main() {
         resolve,
     };
 
-    let mut server = Server::new(server_config, listen_addr, log.clone())
+    let server = Server::new(server_config, listen_addr, log.clone())
         .await
         .unwrap();
 
     loop {
-        let (stream, _) = server.accept(args.corpus.as_slice()).await.unwrap();
+        let (stream, _) =
+            server.accept(args.corpus.clone()).await.await.unwrap();
         let platform_id = stream.peer_platform_id().as_str().unwrap();
         info!(log, "connected to attested peer: {platform_id}");
         let (mut reader, mut writer) = split(stream);
