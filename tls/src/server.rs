@@ -28,8 +28,7 @@ use rustls::{
     CipherSuite, ServerConfig, SignatureScheme,
 };
 use slog::{error, info};
-use std::future::Future;
-use std::net::SocketAddrV6;
+use std::net::{SocketAddr, SocketAddrV6};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
@@ -82,6 +81,192 @@ impl ResolvesServerCert for CertResolver {
                 None
             }
         }
+    }
+}
+
+pub struct SprocketsAcceptor {
+    stream: TcpStream,
+    addr: SocketAddr,
+    log: slog::Logger,
+    tls_acceptor: TlsAcceptor,
+    attest_config: AttestConfig,
+    roots: Vec<Certificate>,
+    corpus: Vec<Utf8PathBuf>,
+}
+
+impl SprocketsAcceptor {
+    pub async fn handshake(
+        self,
+    ) -> Result<(Stream<TcpStream>, SocketAddr), Error> {
+        let SprocketsAcceptor {
+            stream,
+            addr,
+            log,
+            tls_acceptor,
+            attest_config,
+            roots,
+            corpus,
+        } = self;
+
+        // load corims into a set of ReferenceMeasurements
+        let mut corims = Vec::new();
+        for c in corpus {
+            corims.push(Corim::from_file(c)?);
+        }
+        let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
+
+        let mut stream = tls_acceptor.clone().accept(stream).await?;
+
+        // get PlatformId from server TLS / Trust Quorum cert chain
+        let (_, conn) = stream.get_ref();
+        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
+            let mut pki_path = Vec::new();
+            for der in tls_certs.iter() {
+                pki_path.push(Certificate::from_der(der).map_err(|_| {
+                    rustls::Error::InvalidCertificate(
+                        rustls::CertificateError::BadEncoding,
+                    )
+                })?)
+            }
+            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
+        } else {
+            return Err(Error::NoTQCerts);
+        };
+
+        // get version from the client
+        let version_bytes = recv_msg(&mut stream).await?;
+        let version =
+            u32::from_le_bytes(version_bytes[..4].try_into().unwrap());
+
+        if version == CURRENT_PROTOCOL_VERSION {
+            // we're good to go
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else if version == PREVIOUS_PROTOCOL_VERSION {
+            // We eventually want to support older protocol
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Ok(version);
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+        } else {
+            // We can't deal with this
+            // We eventually want to support older protocol
+            let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
+            let resp: ProtocolResult = Err(());
+            let resp_len = hubpack::serialize(&mut buf, &resp)?;
+            send_msg(&mut stream, &buf[..resp_len]).await?;
+            // Client has given us something bad, time to give up
+            return Err(Error::ProtocolVersion);
+        }
+
+        // Wait for the protocol ACK
+        let protocol_ack_bytes = recv_msg(&mut stream).await?;
+        let (protocol_ack, _): (ProtocolRequestAck, _) =
+            hubpack::deserialize(&protocol_ack_bytes)?;
+
+        match protocol_ack {
+            Ok(v) => {
+                if v != version {
+                    // this isn't right...
+                    return Err(Error::ClientMismatch);
+                }
+            }
+            Err(_) => return Err(Error::ClientGaveUp),
+        }
+
+        // Right now all protocols are the same
+        info!(log, "Running with protocol version {version}");
+
+        // get Nonce from client
+        let client_nonce = recv_msg(&mut stream).await?;
+        let client_nonce = Nonce::try_from(client_nonce)?;
+
+        // generate & send Nonce to client
+        let nonce = Nonce::from_platform_rng()?;
+        send_msg(&mut stream, nonce.as_ref()).await?;
+
+        // get attestation & verify it before sending it
+        // The attesation protocol has an inherent race condition between
+        // getting the log and the attestation. We verify our own attestation
+        // before sending it to the challenger to fail as early as possible.
+        let attest_data = get_attest_data(&attest_config, &client_nonce)?;
+        dice_verifier::verify_attestation(
+            &attest_data.certs[0],
+            &attest_data.attestation,
+            &attest_data.log,
+            &client_nonce,
+        )?;
+
+        // get & verify client attestation cert chain
+        let client_cert_chain = recv_msg(&mut stream).await?;
+        let client_cert_chain = certs_from_der(&client_cert_chain)?;
+        let root =
+            dice_verifier::verify_cert_chain(&client_cert_chain, Some(&roots))?;
+        let client_platform_id =
+            dice_mfg_msgs::PlatformId::try_from(&client_cert_chain)?;
+        info!(
+            log,
+            "Cert chain from peer \"{}\" verified against root \"{}\"",
+            client_platform_id.as_str()?,
+            root.tbs_certificate.subject,
+        );
+
+        if tq_platform_id != client_platform_id {
+            return Err(Error::PlatformIdMismatch);
+        }
+        info!(log, "TQ & attestation cert chains agree on platform id");
+
+        // send server attestation cert chain to client
+        let cert_chain_der = certs_to_der(&attest_data.certs)?;
+        send_msg(&mut stream, &cert_chain_der).await?;
+
+        // get measurement log from client
+        let client_log = recv_msg(&mut stream).await?;
+        let (client_log, _): (Log, _) = hubpack::deserialize(&client_log)?;
+
+        // send server measurement log to client
+        let mut buf = vec![0u8; Log::MAX_SIZE];
+        let len = hubpack::serialize(&mut buf, &attest_data.log)?;
+        send_msg(&mut stream, &buf[..len]).await?;
+
+        // get attestation from client
+        let client_attestation = recv_msg(&mut stream).await?;
+        let (client_attestation, _): (Attestation, _) =
+            hubpack::deserialize(&client_attestation)?;
+
+        // verify client attestation
+        dice_verifier::verify_attestation(
+            &client_cert_chain[0],
+            &client_attestation,
+            &client_log,
+            &nonce,
+        )?;
+        info!(log, "Peer attestation verified");
+
+        // appraise measurements from client attestation against reference
+        // measurements
+        let measurements =
+            MeasurementSet::from_artifacts(&client_cert_chain, &client_log)?;
+        let result =
+            match dice_verifier::verify_measurements(&measurements, &corpus) {
+                Ok(()) => {
+                    info!(log, "Peer measurements appraised successfully");
+                    true
+                }
+                Err(e) => {
+                    info!(log, "Peer measurements appraisal failed: {}", e);
+                    false
+                }
+            };
+
+        // hubpack the attestation and send to client
+        let mut buf = vec![0u8; Attestation::MAX_SIZE];
+        let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
+        send_msg(&mut stream, &buf[..len]).await?;
+
+        Ok((Stream::new(stream.into(), client_platform_id, result), addr))
     }
 }
 
@@ -252,191 +437,17 @@ impl Server {
     pub async fn accept(
         &self,
         corpus: Vec<Utf8PathBuf>,
-    ) -> impl Future<
-        Output = Result<(Stream<TcpStream>, core::net::SocketAddr), Error>,
-    > {
-        // This is where the TCP socket accept occurs.
-        //
-        // Everything else takes a while and therefore we return a future that
-        // can be awaited inside a spawned task.
-        let accept_res = self.tcp_listener.accept().await;
+    ) -> Result<SprocketsAcceptor, Error> {
+        let (stream, addr) = self.tcp_listener.accept().await?;
 
-        // Clone all our fields so that we don't hold a reference to `self`
-        // This allows the future to be `Send` so it can be spawned into a task.
-        let tls_acceptor = self.tls_acceptor.clone();
-        let log = self.log.clone();
-        let attest_config = self.attest_config.clone();
-        let roots = self.roots.clone();
-
-        async move {
-            let (stream, addr) = accept_res?;
-            // load corims into a set of ReferenceMeasurements
-            let mut corims = Vec::new();
-            for c in corpus {
-                corims.push(Corim::from_file(c)?);
-            }
-            let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
-
-            let mut stream = tls_acceptor.clone().accept(stream).await?;
-
-            // get PlatformId from server TLS / Trust Quorum cert chain
-            let (_, conn) = stream.get_ref();
-            let tq_platform_id = if let Some(tls_certs) =
-                conn.peer_certificates()
-            {
-                let mut pki_path = Vec::new();
-                for der in tls_certs.iter() {
-                    pki_path.push(Certificate::from_der(der).map_err(|_| {
-                        rustls::Error::InvalidCertificate(
-                            rustls::CertificateError::BadEncoding,
-                        )
-                    })?)
-                }
-                dice_mfg_msgs::PlatformId::try_from(&pki_path)?
-            } else {
-                return Err(Error::NoTQCerts);
-            };
-
-            // get version from the client
-            let version_bytes = recv_msg(&mut stream).await?;
-            let version =
-                u32::from_le_bytes(version_bytes[..4].try_into().unwrap());
-
-            if version == CURRENT_PROTOCOL_VERSION {
-                // we're good to go
-                let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
-                let resp: ProtocolResult = Ok(version);
-                let resp_len = hubpack::serialize(&mut buf, &resp)?;
-                send_msg(&mut stream, &buf[..resp_len]).await?;
-            } else if version == PREVIOUS_PROTOCOL_VERSION {
-                // We eventually want to support older protocol
-                let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
-                let resp: ProtocolResult = Ok(version);
-                let resp_len = hubpack::serialize(&mut buf, &resp)?;
-                send_msg(&mut stream, &buf[..resp_len]).await?;
-            } else {
-                // We can't deal with this
-                // We eventually want to support older protocol
-                let mut buf = vec![0u8; ProtocolResult::MAX_SIZE];
-                let resp: ProtocolResult = Err(());
-                let resp_len = hubpack::serialize(&mut buf, &resp)?;
-                send_msg(&mut stream, &buf[..resp_len]).await?;
-                // Client has given us something bad, time to give up
-                return Err(Error::ProtocolVersion);
-            }
-
-            // Wait for the protocol ACK
-            let protocol_ack_bytes = recv_msg(&mut stream).await?;
-            let (protocol_ack, _): (ProtocolRequestAck, _) =
-                hubpack::deserialize(&protocol_ack_bytes)?;
-
-            match protocol_ack {
-                Ok(v) => {
-                    if v != version {
-                        // this isn't right...
-                        return Err(Error::ClientMismatch);
-                    }
-                }
-                Err(_) => return Err(Error::ClientGaveUp),
-            }
-
-            // Right now all protocols are the same
-            info!(log, "Running with protocol version {version}");
-
-            // get Nonce from client
-            let client_nonce = recv_msg(&mut stream).await?;
-            let client_nonce = Nonce::try_from(client_nonce)?;
-
-            // generate & send Nonce to client
-            let nonce = Nonce::from_platform_rng()?;
-            send_msg(&mut stream, nonce.as_ref()).await?;
-
-            // get attestation & verify it before sending it
-            // The attesation protocol has an inherent race condition between
-            // getting the log and the attestation. We verify our own attestation
-            // before sending it to the challenger to fail as early as possible.
-            let attest_data = get_attest_data(&attest_config, &client_nonce)?;
-            dice_verifier::verify_attestation(
-                &attest_data.certs[0],
-                &attest_data.attestation,
-                &attest_data.log,
-                &client_nonce,
-            )?;
-
-            // get & verify client attestation cert chain
-            let client_cert_chain = recv_msg(&mut stream).await?;
-            let client_cert_chain = certs_from_der(&client_cert_chain)?;
-            let root = dice_verifier::verify_cert_chain(
-                &client_cert_chain,
-                Some(&roots),
-            )?;
-            let client_platform_id =
-                dice_mfg_msgs::PlatformId::try_from(&client_cert_chain)?;
-            info!(
-                log,
-                "Cert chain from peer \"{}\" verified against root \"{}\"",
-                client_platform_id.as_str()?,
-                root.tbs_certificate.subject,
-            );
-
-            if tq_platform_id != client_platform_id {
-                return Err(Error::PlatformIdMismatch);
-            }
-            info!(log, "TQ & attestation cert chains agree on platform id");
-
-            // send server attestation cert chain to client
-            let cert_chain_der = certs_to_der(&attest_data.certs)?;
-            send_msg(&mut stream, &cert_chain_der).await?;
-
-            // get measurement log from client
-            let client_log = recv_msg(&mut stream).await?;
-            let (client_log, _): (Log, _) = hubpack::deserialize(&client_log)?;
-
-            // send server measurement log to client
-            let mut buf = vec![0u8; Log::MAX_SIZE];
-            let len = hubpack::serialize(&mut buf, &attest_data.log)?;
-            send_msg(&mut stream, &buf[..len]).await?;
-
-            // get attestation from client
-            let client_attestation = recv_msg(&mut stream).await?;
-            let (client_attestation, _): (Attestation, _) =
-                hubpack::deserialize(&client_attestation)?;
-
-            // verify client attestation
-            dice_verifier::verify_attestation(
-                &client_cert_chain[0],
-                &client_attestation,
-                &client_log,
-                &nonce,
-            )?;
-            info!(log, "Peer attestation verified");
-
-            // appraise measurements from client attestation against reference
-            // measurements
-            let measurements = MeasurementSet::from_artifacts(
-                &client_cert_chain,
-                &client_log,
-            )?;
-            let result = match dice_verifier::verify_measurements(
-                &measurements,
-                &corpus,
-            ) {
-                Ok(()) => {
-                    info!(log, "Peer measurements appraised successfully");
-                    true
-                }
-                Err(e) => {
-                    info!(log, "Peer measurements appraisal failed: {}", e);
-                    false
-                }
-            };
-
-            // hubpack the attestation and send to client
-            let mut buf = vec![0u8; Attestation::MAX_SIZE];
-            let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
-            send_msg(&mut stream, &buf[..len]).await?;
-
-            Ok((Stream::new(stream.into(), client_platform_id, result), addr))
-        }
+        Ok(SprocketsAcceptor {
+            stream,
+            addr,
+            log: self.log.clone(),
+            tls_acceptor: self.tls_acceptor.clone(),
+            attest_config: self.attest_config.clone(),
+            roots: self.roots.clone(),
+            corpus,
+        })
     }
 }

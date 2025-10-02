@@ -406,8 +406,13 @@ mod tests {
                 .await
                 .unwrap();
 
-            let (mut stream, _) =
-                server.accept(corpus.clone()).await.await.unwrap();
+            let (mut stream, _) = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await
+                .unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
 
@@ -466,8 +471,13 @@ mod tests {
                 .await
                 .unwrap();
 
-            let (mut stream, _) =
-                server.accept(corpus.clone()).await.await.unwrap();
+            let (mut stream, _) = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await
+                .unwrap();
             let mut buf = String::new();
             stream.read_to_string(&mut buf).await.unwrap();
 
@@ -529,7 +539,13 @@ mod tests {
                 .unwrap();
 
             // We never expect this to succeed
-            let _ = match server.accept(corpus.clone()).await.await {
+            let _ = match server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await
+            {
                 Ok(_) => panic!("This should not succed"),
                 Err(_) => done_tx.send(()),
             };
@@ -602,10 +618,10 @@ mod tests {
                 .unwrap();
 
             for _ in 0..max_connections {
-                let accept_fut = server.accept(corpus.clone()).await;
+                let acceptor = server.accept(corpus.clone()).await.unwrap();
                 let done_count = dc2.clone();
                 tokio::spawn(async move {
-                    let (mut stream, _) = accept_fut.await.unwrap();
+                    let (mut stream, _) = acceptor.handshake().await.unwrap();
                     let mut buf = String::new();
                     stream.read_to_string(&mut buf).await.unwrap();
 
