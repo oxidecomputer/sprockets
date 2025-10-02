@@ -340,8 +340,7 @@ mod tests {
     }
 
     fn local_config(n: usize) -> keys::SprocketsConfig {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
+        let pki_keydir = pki_keydir();
 
         let attest_priv_key =
             pki_keydir.join(format!("test-alias-{n}.key.pem"));
