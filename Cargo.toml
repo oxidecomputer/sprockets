@@ -1,11 +1,13 @@
 [workspace]
 members = [
     "tls",
+    "tls/test-utils",
     "xtask",
 ]
 
 default-members = [
     "tls",
+    "tls/test-utils"
 ]
 resolver = "2"
 [profile.dev]
@@ -26,6 +28,7 @@ dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "4b4
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
+pki-playground = { path = "../pki-playground" }
 rustls = { version = "0.23.10", default-features = false, features = ["std", "ring", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1", default-features = false }
