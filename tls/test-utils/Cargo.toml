@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 camino.workspace = true
 pki-playground.workspace = true
-sprockets-tls = { path = ".." }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
