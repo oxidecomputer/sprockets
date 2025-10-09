@@ -268,6 +268,10 @@ impl SprocketsAcceptor {
 
         Ok((Stream::new(stream.into(), client_platform_id, result), addr))
     }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
 }
 
 impl ClientCertVerifier for RotCertVerifier {
