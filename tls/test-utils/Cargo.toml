@@ -1,0 +1,11 @@
+[package]
+name = "sprockets-tls-test-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+camino.workspace = true
+pki-playground.workspace = true
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
