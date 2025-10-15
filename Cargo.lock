@@ -1746,6 +1746,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "slog-error-chain"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/slog-error-chain?branch=main#15f69041f45774602108e47fb25e705dc23acfb2"
+dependencies = [
+ "slog",
+ "slog-error-chain-derive",
+]
+
+[[package]]
+name = "slog-error-chain-derive"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/slog-error-chain?branch=main#15f69041f45774602108e47fb25e705dc23acfb2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "slog-term"
 version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1818,6 +1837,7 @@ dependencies = [
  "sha3",
  "slog",
  "slog-async",
+ "slog-error-chain",
  "slog-term",
  "sprockets-tls",
  "thiserror 1.0.69",

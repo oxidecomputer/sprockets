@@ -10,6 +10,7 @@ use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
 use rustls::crypto::ring::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
 use slog::error;
+use slog_error_chain::SlogInlineError;
 use std::io::IoSlice;
 use std::marker::Unpin;
 
@@ -35,18 +36,18 @@ pub use client::Client;
 pub use server::Server;
 
 /// The top-level sprockets error type
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, SlogInlineError)]
 pub enum Error {
-    #[error("rustls error: {0}")]
+    #[error("rustls error")]
     Rustls(#[from] rustls::Error),
 
-    #[error("der error: {0}")]
+    #[error("der error")]
     Der(#[from] der::Error),
 
-    #[error("pem error: {0}")]
+    #[error("pem error")]
     Pem(#[from] pem_rfc7468::Error),
 
-    #[error("io error: {0}")]
+    #[error("io error")]
     Io(#[from] std::io::Error),
 
     #[error("io error: {path}")]
@@ -56,54 +57,54 @@ pub enum Error {
         err: io::Error,
     },
 
-    #[error("RotRequest: {0}")]
+    #[error("RotRequest")]
     RotRequest(#[from] ipcc::RotRequestError),
 
     #[error("Incorrect Private Key Format: {0}")]
     BadPrivateKey(String),
 
-    #[error("Failed to create mock attester: {0}")]
+    #[error("Failed to create mock attester")]
     AttestMock(#[from] dice_verifier::mock::AttestMockError),
 
-    #[error("Failed to create IPCC attester: {0}")]
+    #[error("Failed to create IPCC attester")]
     AttestIpcc(#[from] dice_verifier::ipcc::IpccError),
 
-    #[error("Failed to parse CBOR encoded CoRIM: {0}")]
+    #[error("Failed to parse CBOR encoded CoRIM")]
     CorimError(#[from] dice_verifier::CorimError),
 
     #[error(
-        "Failed to create MeasurementSet from attestation cert chain & log: {0}"
+        "Failed to create MeasurementSet from attestation cert chain & log"
     )]
     MeasurementSet(#[from] dice_verifier::MeasurementSetError),
 
-    #[error("Failed to create ReferenceMeasurements from Corim: {0}")]
+    #[error("Failed to create ReferenceMeasurements from Corim")]
     ReferenceMeasurements(#[from] dice_verifier::ReferenceMeasurementsError),
 
-    #[error("Attest error: {0}")]
+    #[error("Attest error")]
     Attest(#[from] dice_verifier::AttestError),
 
-    #[error("AttestData error: {0}")]
+    #[error("AttestData error")]
     AttestData(#[from] attest_data::AttestDataError),
 
-    #[error("Failed to verify peer attestation cert chain: {0}")]
+    #[error("Failed to verify peer attestation cert chain")]
     AttestCertVerifier(#[from] dice_verifier::PkiPathSignatureVerifierError),
 
-    #[error("Failed to get PlatformId from cert chain: {0}")]
+    #[error("Failed to get PlatformId from cert chain")]
     PlatformIdPkiPath(#[from] dice_mfg_msgs::PlatformIdPkiPathError),
 
-    #[error("Failed to get string representation of PlatformId: {0}")]
+    #[error("Failed to get string representation of PlatformId")]
     PlatformId(#[from] dice_mfg_msgs::PlatformIdError),
 
-    #[error("failed to convert bytes into an integer: {0}")]
+    #[error("failed to convert bytes into an integer")]
     IntConversion(#[from] std::num::TryFromIntError),
 
-    #[error("Hubpack error: {0}")]
+    #[error("Hubpack error:")]
     Hubpack(#[from] hubpack::Error),
 
-    #[error("Failed to verify attestation: {0}")]
+    #[error("Failed to verify attestation")]
     AttestationVerifier(#[from] dice_verifier::VerifyAttestationError),
 
-    #[error("Failed to verify measurements from peer attestation data: {0}")]
+    #[error("Failed to verify measurements from peer attestation data")]
     AttestMeasurementsVerifier(#[from] dice_verifier::VerifyMeasurementsError),
 
     #[error("No certs associated with connection")]
