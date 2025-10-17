@@ -17,6 +17,8 @@ use pki_playground::{
     ValidDocument,
 };
 
+pub use pki_playground::OutputFileExistsBehavior;
+
 fn test_root() -> (KeyPair, Entity, Certificate) {
     let name = root_prefix();
     (
