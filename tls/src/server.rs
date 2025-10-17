@@ -335,6 +335,14 @@ pub struct Server {
 }
 
 impl Server {
+    // Return the actual address and port being listened on.
+    //
+    // Sometimes the actual listen port changes because the given port is 0. Using 0
+    // is useful for testing, but we need some way to get the real port out.
+    pub fn listen_addr(&self) -> std::io::Result<SocketAddr> {
+        self.tcp_listener.local_addr()
+    }
+
     fn new_tls_local_server_config(
         priv_key: Utf8PathBuf,
         cert_chain: Utf8PathBuf,
