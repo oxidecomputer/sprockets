@@ -468,7 +468,17 @@ fn test_alias_certificate_list(n: usize) -> CertificateList {
     }
 }
 
+/// Generate configurations starting the id count from 0
+pub fn generate_config_start_from_0(num_nodes: usize) -> ValidDocument {
+    generate_config_start_end(0, num_nodes)
+}
+
+/// Generate configurations starting the id count  from 1
 pub fn generate_config(num_nodes: usize) -> ValidDocument {
+    generate_config_start_end(1, num_nodes + 1)
+}
+
+pub fn generate_config_start_end(start: usize, end: usize) -> ValidDocument {
     let root = test_root();
     let signer = test_signer();
     let mut doc = Document {
@@ -478,7 +488,7 @@ pub fn generate_config(num_nodes: usize) -> ValidDocument {
         certificate_requests: vec![],
         certificate_lists: vec![],
     };
-    for i in 1..=num_nodes {
+    for i in start..end {
         let platformid = test_platformid(i);
         let device_id = test_deviceid(i);
         let sprockets_auth = test_sprockets_auth(i);
@@ -513,6 +523,14 @@ pub fn platform_id(n: usize) -> String {
     format!("PDV2:PPP-PPPPPPP:RRR:{n:011}")
 }
 
+pub fn platform_id_prefix(n: usize) -> String {
+    format!("test-platformid-{n}")
+}
+
+pub fn device_id_prefix(n: usize) -> String {
+    format!("test-deviceid-{n}")
+}
+
 pub fn sprockets_auth_prefix(n: usize) -> String {
     format!("test-sprockets-auth-{n}")
 }
@@ -523,6 +541,10 @@ pub fn alias_prefix(n: usize) -> String {
 
 pub fn root_prefix() -> String {
     "test-root-a".to_string()
+}
+
+pub fn signer_prefix() -> String {
+    "test-signer-a1".to_string()
 }
 
 pub fn private_key_path(dir: Utf8PathBuf, prefix: &str) -> Utf8PathBuf {
@@ -538,6 +560,26 @@ pub fn cert_path(dir: Utf8PathBuf, prefix: &str) -> Utf8PathBuf {
 pub fn certlist_path(dir: Utf8PathBuf, prefix: &str) -> Utf8PathBuf {
     let filename = format!("{prefix}.certlist.pem");
     dir.join(filename)
+}
+
+/// Return all relevant paths for a single "node" with id `n`
+pub fn all_paths(dir: Utf8PathBuf, n: usize) -> Vec<Utf8PathBuf> {
+    vec![
+        private_key_path(dir.clone(), &root_prefix()),
+        private_key_path(dir.clone(), &signer_prefix()),
+        private_key_path(dir.clone(), &platform_id_prefix(n)),
+        private_key_path(dir.clone(), &device_id_prefix(n)),
+        private_key_path(dir.clone(), &sprockets_auth_prefix(n)),
+        private_key_path(dir.clone(), &alias_prefix(n)),
+        cert_path(dir.clone(), &root_prefix()),
+        cert_path(dir.clone(), &signer_prefix()),
+        cert_path(dir.clone(), &platform_id_prefix(n)),
+        cert_path(dir.clone(), &device_id_prefix(n)),
+        cert_path(dir.clone(), &sprockets_auth_prefix(n)),
+        cert_path(dir.clone(), &alias_prefix(n)),
+        certlist_path(dir.clone(), &sprockets_auth_prefix(n)),
+        certlist_path(dir.clone(), &alias_prefix(n)),
+    ]
 }
 
 #[cfg(test)]
