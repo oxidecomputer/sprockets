@@ -34,7 +34,7 @@ use rustls::{
     version::TLS13,
     ClientConfig, SignatureScheme,
 };
-use slog::{error, info};
+use slog::{error, info, warn};
 use x509_cert::{der::Decode, Certificate};
 
 impl ResolvesClientCert for CertResolver {
@@ -399,7 +399,13 @@ impl Client {
                 true
             }
             Err(e) => {
-                info!(log, "Peer measurements appraisal failed {}", e);
+                warn!(
+                    log,
+                    "Peer ({}) measurements appraisal failed {} corpus {}",
+                    server_platform_id.as_str(),
+                    e,
+                    reference_measurements
+                );
                 false
             }
         };

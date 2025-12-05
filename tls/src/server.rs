@@ -27,7 +27,7 @@ use rustls::{
     version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
-use slog::{error, info};
+use slog::{error, info, warn};
 use std::net::{SocketAddr, SocketAddrV6};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -111,6 +111,7 @@ impl SprocketsAcceptor {
         // load corims into a set of ReferenceMeasurements
         let mut corims = Vec::new();
         for c in corpus {
+            info!(log, "Using file {:?}", c);
             corims.push(Corim::from_file(c)?);
         }
 
@@ -260,7 +261,13 @@ impl SprocketsAcceptor {
                     true
                 }
                 Err(e) => {
-                    info!(log, "Peer measurements appraisal failed: {}", e);
+                    warn!(
+                        log,
+                        "Peer ({}) measurements appraisal failed: {} corpus {}",
+                        client_platform_id.as_str(),
+                        e,
+                        corpus
+                    );
                     false
                 }
             };

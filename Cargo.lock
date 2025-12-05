@@ -109,7 +109,7 @@ checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 [[package]]
 name = "attest-data"
 version = "0.5.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=173a5d19ee354cc8f0bc00d4e477923f8d2dc4be#173a5d19ee354cc8f0bc00d4e477923f8d2dc4be"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
 dependencies = [
  "const-oid",
  "der",
@@ -501,7 +501,7 @@ dependencies = [
 [[package]]
 name = "dice-mfg-msgs"
 version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=173a5d19ee354cc8f0bc00d4e477923f8d2dc4be#173a5d19ee354cc8f0bc00d4e477923f8d2dc4be"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
 dependencies = [
  "const-oid",
  "corncobs",
@@ -517,7 +517,7 @@ dependencies = [
 [[package]]
 name = "dice-util-barcode"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=173a5d19ee354cc8f0bc00d4e477923f8d2dc4be#173a5d19ee354cc8f0bc00d4e477923f8d2dc4be"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
 dependencies = [
  "thiserror 2.0.17",
 ]
@@ -525,12 +525,13 @@ dependencies = [
 [[package]]
 name = "dice-verifier"
 version = "0.3.0-pre0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=173a5d19ee354cc8f0bc00d4e477923f8d2dc4be#173a5d19ee354cc8f0bc00d4e477923f8d2dc4be"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
 dependencies = [
  "attest-data",
  "const-oid",
  "ed25519-dalek",
  "env_logger",
+ "hex",
  "hubpack",
  "libipcc 0.1.0 (git+https://github.com/oxidecomputer/ipcc-rs?rev=dbaad520e1f5ae32c10db16ce176f9c24de95652)",
  "log",
