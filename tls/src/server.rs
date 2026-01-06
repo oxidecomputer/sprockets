@@ -113,7 +113,6 @@ impl SprocketsAcceptor {
         for c in corpus {
             corims.push(Corim::from_file(c)?);
         }
-        let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
 
         let mut stream = tls_acceptor.clone().accept(stream).await?;
 
@@ -245,6 +244,11 @@ impl SprocketsAcceptor {
         )?;
         info!(log, "Peer attestation verified");
 
+        for c in attest_data.fixed_corpus {
+            corims.push(Corim::from_file(c)?);
+        }
+
+        let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
         // appraise measurements from client attestation against reference
         // measurements
         let measurements =

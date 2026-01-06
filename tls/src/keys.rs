@@ -373,6 +373,8 @@ pub enum AttestConfig {
         priv_key: Utf8PathBuf,
         cert_chain: Utf8PathBuf,
         log: Utf8PathBuf,
+        #[serde(default)]
+        fixed_corpus: Vec<Utf8PathBuf>,
     },
 }
 
@@ -382,6 +384,7 @@ pub struct AttestArtifacts {
     pub certs: Vec<Certificate>,
     pub log: dice_verifier::Log,
     pub attestation: dice_verifier::Attestation,
+    pub fixed_corpus: Vec<Utf8PathBuf>,
 }
 
 /// This function encapsulates our IPCC usage in a non-async function. This is
@@ -396,18 +399,24 @@ pub fn get_attest_data(
     use dice_verifier::{ipcc::AttestIpcc, Attest, AttestMock};
 
     // create the `Attest` impl prescribed by the config
-    let attest: Box<dyn Attest> = match config {
-        AttestConfig::Ipcc => Box::new(AttestIpcc::new()?),
-        AttestConfig::Local {
-            priv_key,
-            cert_chain,
-            log,
-        } => Box::new(AttestMock::load(cert_chain, log, priv_key)?),
-    };
+    let (attest, fixed_corpus): (Box<dyn Attest>, Vec<Utf8PathBuf>) =
+        match config {
+            AttestConfig::Ipcc => (Box::new(AttestIpcc::new()?), vec![]),
+            AttestConfig::Local {
+                priv_key,
+                cert_chain,
+                log,
+                fixed_corpus,
+            } => (
+                Box::new(AttestMock::load(cert_chain, log, priv_key)?),
+                fixed_corpus.to_vec(),
+            ),
+        };
 
     Ok(AttestArtifacts {
         certs: attest.get_certificates()?,
         log: attest.get_measurement_log()?,
         attestation: attest.attest(nonce)?,
+        fixed_corpus,
     })
 }
