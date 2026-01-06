@@ -157,13 +157,6 @@ impl Client {
             }
         };
 
-        // load corims into a set of ReferenceMeasurements
-        let mut corims = Vec::new();
-        for c in corpus {
-            corims.push(Corim::from_file(c)?);
-        }
-        let corpus = ReferenceMeasurements::try_from(corims.as_slice())?;
-
         Client::connect_with_config(c, config.attest, roots, corpus, addr, log)
             .await
     }
@@ -232,7 +225,7 @@ impl Client {
         tls_config: ClientConfig,
         attest_config: AttestConfig,
         roots: Vec<Certificate>,
-        reference_measurements: ReferenceMeasurements,
+        corpus: Vec<Utf8PathBuf>,
         addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Stream<TcpStream>, Error> {
@@ -380,6 +373,18 @@ impl Client {
             &nonce,
         )?;
         info!(log, "Peer attestation verified");
+
+        // load corims into a set of ReferenceMeasurements
+        let mut corims = Vec::new();
+        for c in corpus {
+            corims.push(Corim::from_file(c)?);
+        }
+
+        for c in attest_data.fixed_corpus {
+            corims.push(Corim::from_file(c)?);
+        }
+        let reference_measurements =
+            ReferenceMeasurements::try_from(corims.as_slice())?;
 
         // appraise measurements from server attestation against reference
         // measurements
