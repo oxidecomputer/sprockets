@@ -244,7 +244,7 @@ impl SprocketsAcceptor {
         )?;
         info!(log, "Peer attestation verified");
 
-        for c in attest_data.fixed_corpus {
+        for c in attest_data.test_corpus {
             corims.push(Corim::from_file(c)?);
         }
 

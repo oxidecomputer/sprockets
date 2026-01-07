@@ -74,7 +74,7 @@ async fn main() {
                 priv_key: attest_priv_key,
                 cert_chain: attest_cert_chain,
                 log,
-                fixed_corpus: vec![],
+                test_corpus: vec![],
             },
             ResolveSetting::Local {
                 priv_key: tq_priv_key,
