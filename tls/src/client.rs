@@ -380,7 +380,7 @@ impl Client {
             corims.push(Corim::from_file(c)?);
         }
 
-        for c in attest_data.fixed_corpus {
+        for c in attest_data.test_corpus {
             corims.push(Corim::from_file(c)?);
         }
         let reference_measurements =

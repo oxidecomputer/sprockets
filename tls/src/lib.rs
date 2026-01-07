@@ -357,7 +357,7 @@ mod tests {
                 priv_key: attest_priv_key,
                 cert_chain: attest_cert_chain,
                 log: pki_keydir.join("log.bin"),
-                fixed_corpus: vec![],
+                test_corpus: vec![],
             },
             roots: vec![pki_keydir.join("test-root-a.cert.pem")],
             resolve: keys::ResolveSetting::Local {
