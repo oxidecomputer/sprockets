@@ -101,7 +101,7 @@ async fn main() {
             .handshake()
             .await
             .unwrap();
-        let platform_id = stream.peer_platform_id().as_str().unwrap();
+        let platform_id = stream.peer_platform_id().as_str();
         info!(log, "connected to attested peer: {platform_id}");
         let (mut reader, mut writer) = split(stream);
         let n = copy(&mut reader, &mut writer).await.unwrap();
