@@ -520,7 +520,7 @@ pub fn generate_config_start_end(start: usize, end: usize) -> ValidDocument {
 /// Return the platform id string associated with the `nth` sprockets
 /// configuration
 pub fn platform_id(n: usize) -> String {
-    format!("PDV2:PPP-PPPPPPP:RRR:{n:011}")
+    format!("PDV2:913-0000019:RRR:2{n:07}")
 }
 
 pub fn platform_id_prefix(n: usize) -> String {

@@ -208,7 +208,7 @@ impl SprocketsAcceptor {
         info!(
             log,
             "Cert chain from peer \"{}\" verified against root \"{}\"",
-            client_platform_id.as_str()?,
+            client_platform_id.as_str(),
             root.tbs_certificate.subject,
         );
 

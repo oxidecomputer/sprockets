@@ -93,7 +93,7 @@ async fn main() {
     let stream = Client::connect(client_config, addr, args.corpus, log.clone())
         .await
         .unwrap();
-    let platform_id = stream.peer_platform_id().as_str().unwrap();
+    let platform_id = stream.peer_platform_id().as_str();
     info!(log, "connected to attested peer: {platform_id}");
 
     let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());

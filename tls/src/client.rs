@@ -337,7 +337,7 @@ impl Client {
         info!(
             log,
             "Cert chain from peer \"{}\" verified against root \"{}\"",
-            server_platform_id.as_str()?,
+            server_platform_id.as_str(),
             root.tbs_certificate.subject,
         );
 
