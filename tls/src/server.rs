@@ -92,6 +92,7 @@ pub struct SprocketsAcceptor {
     attest_config: AttestConfig,
     roots: Vec<Certificate>,
     corpus: Vec<Utf8PathBuf>,
+    enforce: bool,
 }
 
 impl SprocketsAcceptor {
@@ -106,6 +107,7 @@ impl SprocketsAcceptor {
             attest_config,
             roots,
             corpus,
+            enforce,
         } = self;
 
         // load corims into a set of ReferenceMeasurements
@@ -260,14 +262,20 @@ impl SprocketsAcceptor {
                     info!(log, "Peer measurements appraised successfully");
                     true
                 }
-                Err(e) => {
+                Err(err) => {
                     warn!(
                         log,
                         "Peer ({}) measurements appraisal failed: {} corpus {}",
                         client_platform_id.as_str(),
-                        e,
+                        err,
                         corpus
                     );
+                    if enforce {
+                        return Err(Error::AttestMeasurementsVerifier {
+                            peer: client_platform_id,
+                            err,
+                        });
+                    }
                     false
                 }
             };
@@ -343,6 +351,7 @@ pub struct Server {
     tls_acceptor: TlsAcceptor,
     roots: Vec<Certificate>,
     attest_config: AttestConfig,
+    enforce: bool,
 }
 
 impl Server {
@@ -436,7 +445,7 @@ impl Server {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }
         };
-        Server::listen(c, config.attest, roots, addr, log).await
+        Server::listen(c, config.attest, roots, addr, log, config.enforce).await
     }
 
     async fn listen(
@@ -445,6 +454,7 @@ impl Server {
         roots: Vec<Certificate>,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
+        enforce: bool,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
@@ -454,6 +464,7 @@ impl Server {
             tcp_listener,
             tls_acceptor,
             roots,
+            enforce,
         })
     }
 
@@ -471,6 +482,7 @@ impl Server {
             attest_config: self.attest_config.clone(),
             roots: self.roots.clone(),
             corpus,
+            enforce: self.enforce,
         })
     }
 }

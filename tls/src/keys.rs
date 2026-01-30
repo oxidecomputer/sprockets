@@ -360,6 +360,8 @@ pub struct SprocketsConfig {
     pub resolve: ResolveSetting,
     pub attest: AttestConfig,
     pub roots: Vec<Utf8PathBuf>,
+    #[serde(default)]
+    pub enforce: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

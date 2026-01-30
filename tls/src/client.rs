@@ -157,8 +157,16 @@ impl Client {
             }
         };
 
-        Client::connect_with_config(c, config.attest, roots, corpus, addr, log)
-            .await
+        Client::connect_with_config(
+            c,
+            config.attest,
+            roots,
+            corpus,
+            addr,
+            log,
+            config.enforce,
+        )
+        .await
     }
 
     // For some testing shenanigans
@@ -228,6 +236,7 @@ impl Client {
         corpus: Vec<Utf8PathBuf>,
         addr: SocketAddrV6,
         log: slog::Logger,
+        enforce: bool,
     ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
@@ -398,14 +407,20 @@ impl Client {
                 info!(log, "Peer measurements appraised successfully");
                 true
             }
-            Err(e) => {
+            Err(err) => {
                 warn!(
                     log,
                     "Peer ({}) measurements appraisal failed {} corpus {}",
                     server_platform_id.as_str(),
-                    e,
+                    err,
                     reference_measurements
                 );
+                if enforce {
+                    return Err(Error::AttestMeasurementsVerifier {
+                        peer: server_platform_id,
+                        err,
+                    });
+                }
                 false
             }
         };

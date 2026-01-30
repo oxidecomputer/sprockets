@@ -44,6 +44,8 @@ struct Args {
     /// Address and port to bind
     #[clap(long)]
     addr: String,
+    #[clap(long)]
+    enforce: bool,
 }
 
 #[tokio::main]
@@ -86,6 +88,7 @@ async fn main() {
         attest,
         roots: args.roots,
         resolve,
+        enforce: args.enforce,
     };
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();

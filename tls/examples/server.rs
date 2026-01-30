@@ -43,6 +43,8 @@ struct Args {
     /// Address and port to bind
     #[clap(long)]
     addr: String,
+    #[clap(long)]
+    enforce: bool,
 }
 
 #[tokio::main]
@@ -87,6 +89,7 @@ async fn main() {
         attest,
         roots: args.roots,
         resolve,
+        enforce: args.enforce,
     };
 
     let server = Server::new(server_config, listen_addr, log.clone())
