@@ -11,7 +11,9 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 use crate::keys::{get_attest_data, AttestConfig, ResolveSetting};
-use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+use crate::keys::{
+    CertResolver, MeasurementConnectionPolicy, RotCertVerifier, SprocketsConfig,
+};
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
     send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
@@ -236,7 +238,7 @@ impl Client {
         corpus: Vec<Utf8PathBuf>,
         addr: SocketAddrV6,
         log: slog::Logger,
-        enforce: bool,
+        enforce: MeasurementConnectionPolicy,
     ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
@@ -415,13 +417,15 @@ impl Client {
                     err,
                     reference_measurements
                 );
-                if enforce {
-                    return Err(Error::AttestMeasurementsVerifier {
-                        peer: server_platform_id,
-                        err,
-                    });
+                match enforce {
+                    MeasurementConnectionPolicy::Enforce => {
+                        return Err(Error::AttestMeasurementsVerifier {
+                            peer: server_platform_id,
+                            err,
+                        });
+                    }
+                    MeasurementConnectionPolicy::Permissive => false,
                 }
-                false
             }
         };
         Ok(Stream::new(stream.into(), server_platform_id, result))

@@ -354,14 +354,29 @@ impl RotCertVerifier {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Copy)]
+pub enum MeasurementConnectionPolicy {
+    /// Do not allow connections without correct measurements
+    Enforce,
+    /// Allow connections with incorrect measurements
+    Permissive,
+}
+
+impl MeasurementConnectionPolicy {
+    fn default_policy() -> Self {
+        // One day this will be come default enforcing
+        Self::Permissive
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SprocketsConfig {
     pub resolve: ResolveSetting,
     pub attest: AttestConfig,
     pub roots: Vec<Utf8PathBuf>,
-    #[serde(default)]
-    pub enforce: bool,
+    #[serde(default = "MeasurementConnectionPolicy::default_policy")]
+    pub enforce: MeasurementConnectionPolicy,
 }
 
 #[derive(Clone, Debug, Deserialize)]

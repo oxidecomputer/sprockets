@@ -322,6 +322,7 @@ pub fn crypto_provider() -> CryptoProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::MeasurementConnectionPolicy;
     use camino::Utf8PathBuf;
     use slog::Drain;
     use std::net::SocketAddrV6;
@@ -345,7 +346,10 @@ mod tests {
         pki_keydir
     }
 
-    fn local_config(n: usize, enforce: bool) -> keys::SprocketsConfig {
+    fn local_config(
+        n: usize,
+        enforce: MeasurementConnectionPolicy,
+    ) -> keys::SprocketsConfig {
         let pki_keydir = pki_keydir();
 
         let attest_priv_key =
@@ -393,6 +397,8 @@ mod tests {
         let _: keys::SprocketsConfig = toml::from_str(local).unwrap();
     }
 
+    // This is explicily testing the MeasurementConnectionPolicy::Permissive
+    // behavior. This test should be removed when that policy is removed.
     #[tokio::test]
     async fn no_corpus() {
         let log = logger();
@@ -408,7 +414,8 @@ mod tests {
         ];
 
         tokio::spawn(async move {
-            let server_config = local_config(1, false);
+            let server_config =
+                local_config(1, MeasurementConnectionPolicy::Permissive);
             let server = Server::new(server_config, addr, log2.clone())
                 .await
                 .unwrap();
@@ -431,7 +438,8 @@ mod tests {
 
         // Loop until we succesfully connect
         let mut stream = loop {
-            let client_config = local_config(2, false);
+            let client_config =
+                local_config(2, MeasurementConnectionPolicy::Permissive);
 
             let corpus = vec![
                 // We don't use a corpus
@@ -461,7 +469,8 @@ mod tests {
         let log = logger();
         let pki_keydir = pki_keydir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
-        let server_config = local_config(1, true);
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforce);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -496,7 +505,8 @@ mod tests {
 
         // Loop until we succesfully connect
         let mut stream = loop {
-            let client_config = local_config(2, true);
+            let client_config =
+                local_config(2, MeasurementConnectionPolicy::Enforce);
 
             let corpus = vec![
                 pki_keydir.join("corim-rot.cbor"),
@@ -528,7 +538,8 @@ mod tests {
         let pki_keydir = pki_keydir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
 
-        let server_config = local_config(1, true);
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforce);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -601,7 +612,8 @@ mod tests {
 
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46466").unwrap();
 
-        let server_config = local_config(1, true);
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforce);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -646,7 +658,8 @@ mod tests {
             tokio::spawn(async move {
                 // Loop until we succesfully connect
                 let mut stream = loop {
-                    let client_config = local_config(2, true);
+                    let client_config =
+                        local_config(2, MeasurementConnectionPolicy::Enforce);
 
                     let corpus = vec![
                         pki_keydir.join("corim-rot.cbor"),

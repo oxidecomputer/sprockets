@@ -7,7 +7,9 @@ use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
 use sprockets_tls::client::Client;
-use sprockets_tls::keys::{AttestConfig, ResolveSetting, SprocketsConfig};
+use sprockets_tls::keys::{
+    AttestConfig, MeasurementConnectionPolicy, ResolveSetting, SprocketsConfig,
+};
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
@@ -88,7 +90,11 @@ async fn main() {
         attest,
         roots: args.roots,
         resolve,
-        enforce: args.enforce,
+        enforce: if args.enforce {
+            MeasurementConnectionPolicy::Enforce
+        } else {
+            MeasurementConnectionPolicy::Permissive
+        },
     };
 
     let addr = SocketAddrV6::from_str(&args.addr).unwrap();

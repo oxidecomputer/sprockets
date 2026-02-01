@@ -5,8 +5,8 @@
 //! A TLS based server
 
 use crate::keys::{
-    get_attest_data, AttestConfig, CertResolver, ResolveSetting,
-    RotCertVerifier, SprocketsConfig,
+    get_attest_data, AttestConfig, CertResolver, MeasurementConnectionPolicy,
+    ResolveSetting, RotCertVerifier, SprocketsConfig,
 };
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
@@ -92,7 +92,7 @@ pub struct SprocketsAcceptor {
     attest_config: AttestConfig,
     roots: Vec<Certificate>,
     corpus: Vec<Utf8PathBuf>,
-    enforce: bool,
+    enforce: MeasurementConnectionPolicy,
 }
 
 impl SprocketsAcceptor {
@@ -270,13 +270,15 @@ impl SprocketsAcceptor {
                         err,
                         corpus
                     );
-                    if enforce {
-                        return Err(Error::AttestMeasurementsVerifier {
-                            peer: client_platform_id,
-                            err,
-                        });
+                    match enforce {
+                        MeasurementConnectionPolicy::Enforce => {
+                            return Err(Error::AttestMeasurementsVerifier {
+                                peer: client_platform_id,
+                                err,
+                            });
+                        }
+                        MeasurementConnectionPolicy::Permissive => false,
                     }
-                    false
                 }
             };
 
@@ -351,7 +353,7 @@ pub struct Server {
     tls_acceptor: TlsAcceptor,
     roots: Vec<Certificate>,
     attest_config: AttestConfig,
-    enforce: bool,
+    enforce: MeasurementConnectionPolicy,
 }
 
 impl Server {
@@ -454,7 +456,7 @@ impl Server {
         roots: Vec<Certificate>,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
-        enforce: bool,
+        enforce: MeasurementConnectionPolicy,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
