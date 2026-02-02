@@ -11,7 +11,9 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 use crate::keys::{get_attest_data, AttestConfig, ResolveSetting};
-use crate::keys::{CertResolver, RotCertVerifier, SprocketsConfig};
+use crate::keys::{
+    CertResolver, MeasurementConnectionPolicy, RotCertVerifier, SprocketsConfig,
+};
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
     send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
@@ -157,8 +159,16 @@ impl Client {
             }
         };
 
-        Client::connect_with_config(c, config.attest, roots, corpus, addr, log)
-            .await
+        Client::connect_with_config(
+            c,
+            config.attest,
+            roots,
+            corpus,
+            addr,
+            log,
+            config.enforce,
+        )
+        .await
     }
 
     // For some testing shenanigans
@@ -228,6 +238,7 @@ impl Client {
         corpus: Vec<Utf8PathBuf>,
         addr: SocketAddrV6,
         log: slog::Logger,
+        enforce: MeasurementConnectionPolicy,
     ) -> Result<Stream<TcpStream>, Error> {
         // Nodes on the bootstrap network don't have DNS names. We don't
         // actually ever know who we are connecting to on the bootstrap
@@ -398,15 +409,23 @@ impl Client {
                 info!(log, "Peer measurements appraised successfully");
                 true
             }
-            Err(e) => {
+            Err(err) => {
                 warn!(
                     log,
                     "Peer ({}) measurements appraisal failed {} corpus {}",
                     server_platform_id.as_str(),
-                    e,
+                    err,
                     reference_measurements
                 );
-                false
+                match enforce {
+                    MeasurementConnectionPolicy::Enforced => {
+                        return Err(Error::AttestMeasurementsVerifier {
+                            peer: server_platform_id,
+                            err,
+                        });
+                    }
+                    MeasurementConnectionPolicy::Permissive => false,
+                }
             }
         };
         Ok(Stream::new(stream.into(), server_platform_id, result))

@@ -6,7 +6,9 @@
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
-use sprockets_tls::keys::{AttestConfig, ResolveSetting, SprocketsConfig};
+use sprockets_tls::keys::{
+    AttestConfig, MeasurementConnectionPolicy, ResolveSetting, SprocketsConfig,
+};
 use sprockets_tls::Server;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
@@ -43,6 +45,8 @@ struct Args {
     /// Address and port to bind
     #[clap(long)]
     addr: String,
+    #[clap(long)]
+    enforce: bool,
 }
 
 #[tokio::main]
@@ -87,6 +91,11 @@ async fn main() {
         attest,
         roots: args.roots,
         resolve,
+        enforce: if args.enforce {
+            MeasurementConnectionPolicy::Enforced
+        } else {
+            MeasurementConnectionPolicy::Permissive
+        },
     };
 
     let server = Server::new(server_config, listen_addr, log.clone())

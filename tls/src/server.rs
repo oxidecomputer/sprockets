@@ -5,8 +5,8 @@
 //! A TLS based server
 
 use crate::keys::{
-    get_attest_data, AttestConfig, CertResolver, ResolveSetting,
-    RotCertVerifier, SprocketsConfig,
+    get_attest_data, AttestConfig, CertResolver, MeasurementConnectionPolicy,
+    ResolveSetting, RotCertVerifier, SprocketsConfig,
 };
 use crate::{
     certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
@@ -92,6 +92,7 @@ pub struct SprocketsAcceptor {
     attest_config: AttestConfig,
     roots: Vec<Certificate>,
     corpus: Vec<Utf8PathBuf>,
+    enforce: MeasurementConnectionPolicy,
 }
 
 impl SprocketsAcceptor {
@@ -106,6 +107,7 @@ impl SprocketsAcceptor {
             attest_config,
             roots,
             corpus,
+            enforce,
         } = self;
 
         // load corims into a set of ReferenceMeasurements
@@ -260,15 +262,23 @@ impl SprocketsAcceptor {
                     info!(log, "Peer measurements appraised successfully");
                     true
                 }
-                Err(e) => {
+                Err(err) => {
                     warn!(
                         log,
                         "Peer ({}) measurements appraisal failed: {} corpus {}",
                         client_platform_id.as_str(),
-                        e,
+                        err,
                         corpus
                     );
-                    false
+                    match enforce {
+                        MeasurementConnectionPolicy::Enforced => {
+                            return Err(Error::AttestMeasurementsVerifier {
+                                peer: client_platform_id,
+                                err,
+                            });
+                        }
+                        MeasurementConnectionPolicy::Permissive => false,
+                    }
                 }
             };
 
@@ -343,6 +353,7 @@ pub struct Server {
     tls_acceptor: TlsAcceptor,
     roots: Vec<Certificate>,
     attest_config: AttestConfig,
+    enforce: MeasurementConnectionPolicy,
 }
 
 impl Server {
@@ -436,7 +447,7 @@ impl Server {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }
         };
-        Server::listen(c, config.attest, roots, addr, log).await
+        Server::listen(c, config.attest, roots, addr, log, config.enforce).await
     }
 
     async fn listen(
@@ -445,6 +456,7 @@ impl Server {
         roots: Vec<Certificate>,
         listen_addr: SocketAddrV6,
         log: slog::Logger,
+        enforce: MeasurementConnectionPolicy,
     ) -> Result<Server, Error> {
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let tcp_listener = TcpListener::bind(&listen_addr).await?;
@@ -454,6 +466,7 @@ impl Server {
             tcp_listener,
             tls_acceptor,
             roots,
+            enforce,
         })
     }
 
@@ -471,6 +484,7 @@ impl Server {
             attest_config: self.attest_config.clone(),
             roots: self.roots.clone(),
             corpus,
+            enforce: self.enforce,
         })
     }
 }
