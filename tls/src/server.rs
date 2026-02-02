@@ -271,7 +271,7 @@ impl SprocketsAcceptor {
                         corpus
                     );
                     match enforce {
-                        MeasurementConnectionPolicy::Enforce => {
+                        MeasurementConnectionPolicy::Enforced => {
                             return Err(Error::AttestMeasurementsVerifier {
                                 peer: client_platform_id,
                                 err,

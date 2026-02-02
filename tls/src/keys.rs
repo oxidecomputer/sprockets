@@ -357,7 +357,7 @@ impl RotCertVerifier {
 #[derive(Debug, Clone, Deserialize, Copy)]
 pub enum MeasurementConnectionPolicy {
     /// Do not allow connections without correct measurements
-    Enforce,
+    Enforced,
     /// Allow connections with incorrect measurements
     Permissive,
 }

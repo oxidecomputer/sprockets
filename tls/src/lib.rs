@@ -470,7 +470,7 @@ mod tests {
         let pki_keydir = pki_keydir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
         let server_config =
-            local_config(1, MeasurementConnectionPolicy::Enforce);
+            local_config(1, MeasurementConnectionPolicy::Enforced);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -506,7 +506,7 @@ mod tests {
         // Loop until we succesfully connect
         let mut stream = loop {
             let client_config =
-                local_config(2, MeasurementConnectionPolicy::Enforce);
+                local_config(2, MeasurementConnectionPolicy::Enforced);
 
             let corpus = vec![
                 pki_keydir.join("corim-rot.cbor"),
@@ -539,7 +539,7 @@ mod tests {
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
 
         let server_config =
-            local_config(1, MeasurementConnectionPolicy::Enforce);
+            local_config(1, MeasurementConnectionPolicy::Enforced);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -613,7 +613,7 @@ mod tests {
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46466").unwrap();
 
         let server_config =
-            local_config(1, MeasurementConnectionPolicy::Enforce);
+            local_config(1, MeasurementConnectionPolicy::Enforced);
 
         // Message to send over TLS
         const MSG: &str = "Hello Joe";
@@ -659,7 +659,7 @@ mod tests {
                 // Loop until we succesfully connect
                 let mut stream = loop {
                     let client_config =
-                        local_config(2, MeasurementConnectionPolicy::Enforce);
+                        local_config(2, MeasurementConnectionPolicy::Enforced);
 
                     let corpus = vec![
                         pki_keydir.join("corim-rot.cbor"),

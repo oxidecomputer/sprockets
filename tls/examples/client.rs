@@ -91,7 +91,7 @@ async fn main() {
         roots: args.roots,
         resolve,
         enforce: if args.enforce {
-            MeasurementConnectionPolicy::Enforce
+            MeasurementConnectionPolicy::Enforced
         } else {
             MeasurementConnectionPolicy::Permissive
         },
