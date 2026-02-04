@@ -77,7 +77,7 @@ impl ResolvesServerCert for CertResolver {
         match self.load_certified_key() {
             Ok(key) => Some(key),
             Err(e) => {
-                error!(self.log, "failed to load certified key: {e}");
+                error!(self.log, "failed to load certified key: {e:#}");
                 None
             }
         }
