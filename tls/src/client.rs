@@ -61,7 +61,7 @@ impl ResolvesClientCert for CertResolver {
                 Some(key)
             }
             Err(e) => {
-                error!(self.log, "failed to load certified key: {e}");
+                error!(self.log, "failed to load certified key"; e);
                 None
             }
         }
