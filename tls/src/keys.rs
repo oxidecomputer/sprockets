@@ -406,21 +406,20 @@ pub struct AttestArtifacts {
     pub test_corpus: Vec<Utf8PathBuf>,
 }
 
-/// This function encapsulates our IPCC usage in a non-async function. This is
-/// required till the Ipcc handle is `Send`.
+/// Collect attestation information from the configured attestor.
 ///
 /// NOTE: The `Nonce` parameter must be the nonce provided by the peer in an
 /// attestation exchange.
-pub fn get_attest_data(
+pub async fn get_attest_data(
     config: &AttestConfig,
     nonce: &dice_verifier::Nonce,
 ) -> Result<AttestArtifacts, Error> {
     use dice_verifier::{ipcc::AttestIpcc, Attest, AttestMock};
 
     // create the `Attest` impl prescribed by the config
-    let (attest, test_corpus): (Box<dyn Attest>, Vec<Utf8PathBuf>) =
+    let (attest, test_corpus): (Box<dyn Attest + Send>, Vec<Utf8PathBuf>) =
         match config {
-            AttestConfig::Ipcc => (Box::new(AttestIpcc::new()?), vec![]),
+            AttestConfig::Ipcc => (Box::new(AttestIpcc {}), vec![]),
             AttestConfig::Local {
                 priv_key,
                 cert_chain,
@@ -432,10 +431,14 @@ pub fn get_attest_data(
             ),
         };
 
+    let certs = attest.get_certificates().await?;
+    let log = attest.get_measurement_log().await?;
+    let attestation = attest.attest(nonce).await?;
+
     Ok(AttestArtifacts {
-        certs: attest.get_certificates()?,
-        log: attest.get_measurement_log()?,
-        attestation: attest.attest(nonce)?,
+        certs,
+        log,
+        attestation,
         test_corpus,
     })
 }
