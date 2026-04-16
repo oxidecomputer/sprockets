@@ -22,7 +22,8 @@ use crate::{
 use crate::{Error, Stream};
 use camino::Utf8PathBuf;
 use dice_verifier::{
-    Attestation, Corim, Log, MeasurementSet, Nonce, ReferenceMeasurements,
+    Attestation, Corim, Log, MeasurementSet, Nonce, Nonce32,
+    ReferenceMeasurements,
 };
 use hubpack::SerializedSize;
 use rustls::{
@@ -315,7 +316,7 @@ impl Client {
         info!(log, "Running with protocol version {version}");
 
         // send Nonce to server
-        let nonce = Nonce::from_platform_rng()?;
+        let nonce = Nonce::from_platform_rng(Nonce32::LENGTH)?;
         send_msg(&mut stream, nonce.as_ref()).await?;
 
         // get Nonce from server
@@ -326,7 +327,8 @@ impl Client {
         // The attesation protocol has an inherent race condition between
         // getting the log and the attestation. We verify our own attestation
         // before sending it to the challenger to fail as early as possible.
-        let attest_data = get_attest_data(&attest_config, &server_nonce)?;
+        let attest_data =
+            get_attest_data(&attest_config, &server_nonce).await?;
         dice_verifier::verify_attestation(
             &attest_data.certs[0],
             &attest_data.attestation,

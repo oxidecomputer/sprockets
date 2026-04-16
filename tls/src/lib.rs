@@ -86,6 +86,9 @@ pub enum Error {
     #[error("AttestData error")]
     AttestData(#[from] attest_data::AttestDataError),
 
+    #[error("Nonce error")]
+    NonceError(#[from] attest_data::NonceError),
+
     #[error("Failed to verify peer attestation cert chain")]
     AttestCertVerifier(#[from] dice_verifier::PkiPathSignatureVerifierError),
 

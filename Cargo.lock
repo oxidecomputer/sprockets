@@ -107,9 +107,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "attest-data"
 version = "0.5.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=d7472bfa91aee859c3fe0bdc1dbb1e320285228e#d7472bfa91aee859c3fe0bdc1dbb1e320285228e"
 dependencies = [
  "const-oid",
  "der",
@@ -246,7 +257,7 @@ dependencies = [
  "iana-time-zone",
  "num-traits",
  "serde",
- "windows-link",
+ "windows-link 0.1.3",
 ]
 
 [[package]]
@@ -501,7 +512,7 @@ dependencies = [
 [[package]]
 name = "dice-mfg-msgs"
 version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=d7472bfa91aee859c3fe0bdc1dbb1e320285228e#d7472bfa91aee859c3fe0bdc1dbb1e320285228e"
 dependencies = [
  "const-oid",
  "corncobs",
@@ -517,7 +528,7 @@ dependencies = [
 [[package]]
 name = "dice-util-barcode"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=d7472bfa91aee859c3fe0bdc1dbb1e320285228e#d7472bfa91aee859c3fe0bdc1dbb1e320285228e"
 dependencies = [
  "thiserror 2.0.17",
 ]
@@ -525,21 +536,24 @@ dependencies = [
 [[package]]
 name = "dice-verifier"
 version = "0.3.0-pre0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd#6e0ef48f72ff85ba50fc8286c8e89dc5f9c822dd"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=d7472bfa91aee859c3fe0bdc1dbb1e320285228e#d7472bfa91aee859c3fe0bdc1dbb1e320285228e"
 dependencies = [
+ "async-trait",
  "attest-data",
  "const-oid",
  "ed25519-dalek",
  "env_logger",
  "hex",
  "hubpack",
- "libipcc 0.1.0 (git+https://github.com/oxidecomputer/ipcc-rs?rev=dbaad520e1f5ae32c10db16ce176f9c24de95652)",
+ "libipcc 0.1.0 (git+https://github.com/oxidecomputer/ipcc-rs?rev=7cdf2ab9c8d9e9267a8b366aa780c6c26f9a5ecf)",
  "log",
  "p384",
  "rats-corim",
  "sha3",
+ "slog",
  "tempfile",
  "thiserror 2.0.17",
+ "tokio",
  "x509-cert",
 ]
 
@@ -673,6 +687,15 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "erased-serde"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c138974f9d5e7fe373eb04df7cae98833802ae4b11c24ac7039a21d5af4b26c"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "errno"
@@ -1011,9 +1034,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.174"
+version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
+checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 
 [[package]]
 name = "libipcc"
@@ -1028,7 +1051,7 @@ dependencies = [
 [[package]]
 name = "libipcc"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/ipcc-rs?rev=dbaad520e1f5ae32c10db16ce176f9c24de95652#dbaad520e1f5ae32c10db16ce176f9c24de95652"
+source = "git+https://github.com/oxidecomputer/ipcc-rs?rev=7cdf2ab9c8d9e9267a8b366aa780c6c26f9a5ecf#7cdf2ab9c8d9e9267a8b366aa780c6c26f9a5ecf"
 dependencies = [
  "cfg-if",
  "libc",
@@ -1112,13 +1135,13 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.0.4"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78bed444cc8a2160f01cbcf811ef18cac863ad68ae8ca62092e8db51d51c761c"
+checksum = "50b7e5b27aa02a74bac8c3f23f448f8d87ff11f92d3aac1a6ed369ee08cc56c1"
 dependencies = [
  "libc",
  "wasi",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1745,6 +1768,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1756,9 +1789,15 @@ dependencies = [
 
 [[package]]
 name = "slog"
-version = "2.7.0"
+version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8347046d4ebd943127157b94d63abb990fcf729dc4e9978927fdf4ac3c998d06"
+checksum = "9b3b8565691b22d2bdfc066426ed48f837fc0c5f2c8cad8d9718f7f99d6995c1"
+dependencies = [
+ "anyhow",
+ "erased-serde",
+ "rustversion",
+ "serde_core",
+]
 
 [[package]]
 name = "slog-async"
@@ -1818,12 +1857,12 @@ checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
 name = "socket2"
-version = "0.5.10"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1989,7 +2028,7 @@ dependencies = [
  "fastrand",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2137,25 +2176,25 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.45.1"
+version = "1.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75ef51a33ef1da925cea3e4eb122833cb377c61439ca401b770f54902b806779"
+checksum = "a91135f59b1cbf38c91e73cf3386fca9bb77915c45ce2771460c9d92f0f3d776"
 dependencies = [
- "backtrace",
  "bytes",
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "tokio-macros"
-version = "2.5.0"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2364,7 +2403,7 @@ checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
 dependencies = [
  "windows-implement",
  "windows-interface",
- "windows-link",
+ "windows-link 0.1.3",
  "windows-result",
  "windows-strings",
 ]
@@ -2398,12 +2437,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e6ad25900d524eaabdbbb96d20b4311e1e7ae1699af4fb28c17ae66c80d798a"
 
 [[package]]
+name = "windows-link"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
 name = "windows-result"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f42bd332cc6c8eac5af113fc0c1fd6a8fd2aa08a0119358686e5160d0586c6"
 dependencies = [
- "windows-link",
+ "windows-link 0.1.3",
 ]
 
 [[package]]
@@ -2412,7 +2457,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
- "windows-link",
+ "windows-link 0.1.3",
 ]
 
 [[package]]
@@ -2431,6 +2476,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
+dependencies = [
+ "windows-link 0.2.1",
 ]
 
 [[package]]
