@@ -29,7 +29,7 @@ ed25519-dalek = { version = "2.1", default-features = false, features = ["digest
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
 pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "7600756029ce046a02c6234aa84ce230cc5eaa04" }
-rustls = { version = "0.23.10", default-features = false, features = ["std", "ring", "logging"] }
+rustls = { version = "0.23.10", default-features = false, features = ["std", "aws_lc_rs", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1", default-features = false }
 sha2 = "0.10"
@@ -40,7 +40,7 @@ slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain", 
 slog-term = "2.9.1"
 thiserror = "1.0.57"
 tokio = {version = "1.38.0", features = ["net", "macros", "rt-multi-thread", "io-util", "sync", "time", "io-std"]}
-tokio-rustls = { version = "0.26.0", default-features = false, features = ["ring", "logging"] }
+tokio-rustls = { version = "0.26.0", default-features = false, features = ["aws_lc_rs", "logging"] }
 toml = "0.8.19"
 uuid = { version = "1.10.0", features = ["serde", "v4"] }
 x509-cert = { version = "0.2.5" }
