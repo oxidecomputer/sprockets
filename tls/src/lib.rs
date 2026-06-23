@@ -6,8 +6,8 @@
 
 use camino::Utf8PathBuf;
 use dice_mfg_msgs::PlatformId;
-use rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
-use rustls::crypto::ring::kx_group::X25519;
+use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
+use rustls::crypto::aws_lc_rs::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
 use slog::error;
 use slog_error_chain::SlogInlineError;
@@ -313,7 +313,7 @@ async fn send_msg<T: AsyncWriteExt + Unpin>(
 ///
 /// Only allow CHACHA20_POLY1305_SHA256 for symmetric crypto
 pub fn crypto_provider() -> CryptoProvider {
-    let mut crypto_provider = rustls::crypto::ring::default_provider();
+    let mut crypto_provider = rustls::crypto::aws_lc_rs::default_provider();
     crypto_provider.kx_groups = vec![X25519];
     crypto_provider.cipher_suites = vec![TLS13_CHACHA20_POLY1305_SHA256];
     crypto_provider
