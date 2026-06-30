@@ -33,7 +33,7 @@ rustls = { version = "0.23.10", default-features = false, features = ["std", "aw
 secrecy = "0.8.0"
 serde = { version = "1.0.228", default-features = false }
 sha2 = "0.10.9"
-sha3 = "0.10"
+sha3 = "0.10.9"
 slog = "2.7.0"
 slog-async = "2.1"
 slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain", branch = "main", features = ["derive"] }
