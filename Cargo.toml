@@ -31,7 +31,7 @@ pem-rfc7468 = { version = "0.7.0"}
 pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "7600756029ce046a02c6234aa84ce230cc5eaa04" }
 rustls = { version = "0.23.10", default-features = false, features = ["std", "aws_lc_rs", "logging"] }
 secrecy = "0.8.0"
-serde = { version = "1", default-features = false }
+serde = { version = "1.0.228", default-features = false }
 sha2 = "0.10"
 sha3 = "0.10"
 slog = "2.7.0"
