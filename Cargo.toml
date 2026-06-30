@@ -25,7 +25,7 @@ ciborium = "0.2.2"
 cfg-if = "1.0.4"
 dice-mfg-msgs = { git = "https://github.com/oxidecomputer/dice-util", rev = "d7472bfa91aee859c3fe0bdc1dbb1e320285228e" }
 dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "d7472bfa91aee859c3fe0bdc1dbb1e320285228e" }
-ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
 pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "7600756029ce046a02c6234aa84ce230cc5eaa04" }
