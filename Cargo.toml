@@ -38,7 +38,7 @@ slog = "2.8.2"
 slog-async = "2.8.0"
 slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain", branch = "main", features = ["derive"] }
 slog-term = "2.9.2"
-thiserror = "1.0.57"
+thiserror = "2.0.18"
 tokio = {version = "1.38.0", features = ["net", "macros", "rt-multi-thread", "io-util", "sync", "time", "io-std"]}
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["aws_lc_rs", "logging"] }
 toml = "0.8.19"
