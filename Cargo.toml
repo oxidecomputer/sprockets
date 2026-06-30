@@ -32,7 +32,7 @@ pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev 
 rustls = { version = "0.23.10", default-features = false, features = ["std", "aws_lc_rs", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1.0.228", default-features = false }
-sha2 = "0.10"
+sha2 = "0.10.9"
 sha3 = "0.10"
 slog = "2.7.0"
 slog-async = "2.1"
