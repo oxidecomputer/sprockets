@@ -28,7 +28,7 @@ dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "d74
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
-pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "7600756029ce046a02c6234aa84ce230cc5eaa04" }
+pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "bcd3bf2dfe36468c494eac17463a4e10be366b35" }
 rustls = { version = "0.23.41", default-features = false, features = ["std", "aws_lc_rs", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1.0.228", default-features = false }
