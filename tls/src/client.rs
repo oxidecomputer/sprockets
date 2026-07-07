@@ -449,8 +449,7 @@ mod tests {
     #[test]
     // Ensure the test certs can be loaded and verified
     fn test_client_verifier() {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
+        let pki_keydir = Utf8PathBuf::from(env!("OUT_DIR"));
         let root =
             load_root_cert(&pki_keydir.join("test-root-a.cert.pem")).unwrap();
         let verifier = RotCertVerifier::new(vec![root], logger()).unwrap();

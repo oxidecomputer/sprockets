@@ -1952,6 +1952,7 @@ dependencies = [
  "hubpack",
  "libipcc 0.1.0 (git+https://github.com/oxidecomputer/ipcc-rs?rev=524eb8f125003dff50b9703900c6b323f00f9e1b)",
  "pem-rfc7468",
+ "pki-playground",
  "rustls",
  "secrecy",
  "serde",
