@@ -32,9 +32,11 @@ zeroize.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
+camino = { workspace = true, optional = true }
+pki-playground = { workspace = true, optional = true }
 
 [features]
-unittest = []
+unittest = ["camino", "pki-playground"]
 
 [dev-dependencies]
 sprockets-tls = { path = ".", features = ["unittest"] }

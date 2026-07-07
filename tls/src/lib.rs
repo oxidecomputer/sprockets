@@ -344,9 +344,13 @@ mod tests {
     }
 
     pub fn pki_keydir() -> Utf8PathBuf {
-        let mut pki_keydir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pki_keydir.push("test-keys");
-        pki_keydir
+        Utf8PathBuf::from(env!("OUT_DIR"))
+    }
+
+    pub fn mock_datadir() -> Utf8PathBuf {
+        let mut mock_datadir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        mock_datadir.push("test-keys");
+        mock_datadir
     }
 
     fn local_config(
@@ -364,11 +368,13 @@ mod tests {
         let resolve_cert_chain =
             pki_keydir.join(format!("test-sprockets-auth-{n}.certlist.pem"));
 
+        let mock_datadir = mock_datadir();
+
         keys::SprocketsConfig {
             attest: keys::AttestConfig::Local {
                 priv_key: attest_priv_key,
                 cert_chain: attest_cert_chain,
-                log: pki_keydir.join("log.bin"),
+                log: mock_datadir.join("log.bin"),
                 test_corpus: vec![],
             },
             roots: vec![pki_keydir.join("test-root-a.cert.pem")],
@@ -470,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn basic() {
         let log = logger();
-        let pki_keydir = pki_keydir();
+        let mock_datadir = mock_datadir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46456").unwrap();
         let server_config =
             local_config(1, MeasurementConnectionPolicy::Enforced);
@@ -481,8 +487,8 @@ mod tests {
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
         let log2 = log.clone();
         let corpus = vec![
-            pki_keydir.join("corim-rot.cbor"),
-            pki_keydir.join("corim-sp.cbor"),
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
         ];
 
         tokio::spawn(async move {
@@ -512,8 +518,8 @@ mod tests {
                 local_config(2, MeasurementConnectionPolicy::Enforced);
 
             let corpus = vec![
-                pki_keydir.join("corim-rot.cbor"),
-                pki_keydir.join("corim-sp.cbor"),
+                mock_datadir.join("corim-rot.cbor"),
+                mock_datadir.join("corim-sp.cbor"),
             ];
 
             if let Ok(stream) =
@@ -539,6 +545,7 @@ mod tests {
     async fn unattested_client() {
         let log = logger();
         let pki_keydir = pki_keydir();
+        let mock_datadir = mock_datadir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
 
         let server_config =
@@ -550,8 +557,8 @@ mod tests {
         let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
         let log2 = log.clone();
         let corpus = vec![
-            pki_keydir.join("corim-rot.cbor"),
-            pki_keydir.join("corim-sp.cbor"),
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
         ];
 
         let handle = tokio::spawn(async move {
@@ -611,7 +618,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_accept() {
         let log = logger();
-        let pki_keydir = pki_keydir();
+        let mock_datadir = mock_datadir();
 
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46466").unwrap();
 
@@ -623,8 +630,8 @@ mod tests {
 
         let log2 = log.clone();
         let corpus = vec![
-            pki_keydir.join("corim-rot.cbor"),
-            pki_keydir.join("corim-sp.cbor"),
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
         ];
 
         // Accept connections from `max_connections` clients in different tasks
@@ -656,8 +663,8 @@ mod tests {
 
         // Spawn `max_connections` tasks to concurrently connect
         for _ in 0..max_connections {
-            let pki_keydir = pki_keydir.clone();
             let log = log.clone();
+            let mock_datadir = mock_datadir.clone();
             tokio::spawn(async move {
                 // Loop until we succesfully connect
                 let mut stream = loop {
@@ -665,8 +672,8 @@ mod tests {
                         local_config(2, MeasurementConnectionPolicy::Enforced);
 
                     let corpus = vec![
-                        pki_keydir.join("corim-rot.cbor"),
-                        pki_keydir.join("corim-sp.cbor"),
+                        mock_datadir.join("corim-rot.cbor"),
+                        mock_datadir.join("corim-sp.cbor"),
                     ];
 
                     if let Ok(stream) = Client::connect(
