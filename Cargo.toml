@@ -19,12 +19,13 @@ panic = "abort"
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 camino = { version = "1.1.7", default-features = false, features = ["serde1"] }
-attest-data = { git = "https://github.com/oxidecomputer/dice-util", rev = "d7472bfa91aee859c3fe0bdc1dbb1e320285228e" }
+attest-data = { git = "https://github.com/oxidecomputer/dice-util", rev = "861fe4098abc8d0bba2d26a4da7bec68e21f5ba5" }
+attest-mock = { git = "https://github.com/oxidecomputer/dice-util", rev = "861fe4098abc8d0bba2d26a4da7bec68e21f5ba5" }
 clap = { version = "4", default-features = false, features = ["std", "derive", "default", "wrap_help"] }
 ciborium = "0.2.2"
 cfg-if = "1.0"
-dice-mfg-msgs = { git = "https://github.com/oxidecomputer/dice-util", rev = "d7472bfa91aee859c3fe0bdc1dbb1e320285228e" }
-dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "d7472bfa91aee859c3fe0bdc1dbb1e320285228e" }
+dice-mfg-msgs = { git = "https://github.com/oxidecomputer/dice-util", rev = "861fe4098abc8d0bba2d26a4da7bec68e21f5ba5" }
+dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", rev = "861fe4098abc8d0bba2d26a4da7bec68e21f5ba5" }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["digest", "pkcs8"] }
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}

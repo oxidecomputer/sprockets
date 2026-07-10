@@ -343,32 +343,24 @@ mod tests {
         slog::Logger::root(drain, slog::o!("component" => "sprockets"))
     }
 
-    pub fn pki_keydir() -> Utf8PathBuf {
-        Utf8PathBuf::from(env!("OUT_DIR"))
-    }
-
     pub fn mock_datadir() -> Utf8PathBuf {
-        let mut mock_datadir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        mock_datadir.push("test-keys");
-        mock_datadir
+        Utf8PathBuf::from(env!("OUT_DIR"))
     }
 
     fn local_config(
         n: usize,
         enforce: MeasurementConnectionPolicy,
     ) -> keys::SprocketsConfig {
-        let pki_keydir = pki_keydir();
+        let mock_datadir = mock_datadir();
 
         let attest_priv_key =
-            pki_keydir.join(format!("test-alias-{n}.key.pem"));
+            mock_datadir.join(format!("test-alias-{n}.key.pem"));
         let attest_cert_chain =
-            pki_keydir.join(format!("test-alias-{n}.certlist.pem"));
+            mock_datadir.join(format!("test-alias-{n}.certlist.pem"));
         let resolve_priv_key =
-            pki_keydir.join(format!("test-sprockets-auth-{n}.key.pem"));
+            mock_datadir.join(format!("test-sprockets-auth-{n}.key.pem"));
         let resolve_cert_chain =
-            pki_keydir.join(format!("test-sprockets-auth-{n}.certlist.pem"));
-
-        let mock_datadir = mock_datadir();
+            mock_datadir.join(format!("test-sprockets-auth-{n}.certlist.pem"));
 
         keys::SprocketsConfig {
             attest: keys::AttestConfig::Local {
@@ -377,7 +369,7 @@ mod tests {
                 log: mock_datadir.join("log.bin"),
                 test_corpus: vec![],
             },
-            roots: vec![pki_keydir.join("test-root-a.cert.pem")],
+            roots: vec![mock_datadir.join("test-root-a.cert.pem")],
             resolve: keys::ResolveSetting::Local {
                 priv_key: resolve_priv_key,
                 cert_chain: resolve_cert_chain,
@@ -544,7 +536,6 @@ mod tests {
     #[tokio::test]
     async fn unattested_client() {
         let log = logger();
-        let pki_keydir = pki_keydir();
         let mock_datadir = mock_datadir();
         let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46459").unwrap();
 
@@ -580,9 +571,9 @@ mod tests {
         });
 
         let client_config = client::Client::new_tls_local_client_config(
-            pki_keydir.join("test-sprockets-auth-2.key.pem"),
-            pki_keydir.join("test-sprockets-auth-2.certlist.pem"),
-            vec![pki_keydir.join("test-root-a.cert.pem")],
+            mock_datadir.join("test-sprockets-auth-2.key.pem"),
+            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
+            vec![mock_datadir.join("test-root-a.cert.pem")],
             log,
         )
         .unwrap();
