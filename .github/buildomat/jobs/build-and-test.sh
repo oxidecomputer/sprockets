@@ -12,10 +12,4 @@ set -o xtrace
 cargo --version
 rustc --version
 
-# dependency used by `build.rs` to build measurement log & corpus
-cargo install --locked \
-    --git https://github.com/oxidecomputer/dice-util \
-    --rev 4b408edc1d00f108ddf635415d783e6f12fe9641 \
-    attest-mock
-
 cargo test

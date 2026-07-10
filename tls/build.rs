@@ -6,6 +6,8 @@ use anyhow::Result;
 #[cfg(feature = "unittest")]
 use anyhow::{anyhow, Context};
 #[cfg(feature = "unittest")]
+use attest_mock::MockData;
+#[cfg(feature = "unittest")]
 use camino::Utf8PathBuf;
 #[cfg(feature = "unittest")]
 use pki_playground::{config, OutputFileExistsBehavior};
@@ -15,27 +17,20 @@ use pki_playground::{config, OutputFileExistsBehavior};
 #[cfg(target_os = "illumos")]
 static OXIDE_PLATFORM: &str = "/usr/platform/oxide/lib/amd64/";
 
-/// Execute one of the `attest-mock` commands to generate attestation
-/// artifacts used in testing.
 #[cfg(feature = "unittest")]
-fn attest_gen_cmd(command: &str, input: &str, output: &str) -> Result<()> {
-    // attest-mock "input" "cmd" > "output"
-    let mut cmd = std::process::Command::new("attest-mock");
-    cmd.arg(input).arg(command);
-    let cmd_output =
-        cmd.output().context("executing command \"attest-mock\"")?;
-
-    if cmd_output.status.success() {
-        std::fs::write(output, cmd_output.stdout).context("write {output}")
-    } else {
-        let stderr = String::from_utf8(cmd_output.stderr)
-            .context("String from attest-mock stderr")?;
-        println!("stderr: {stderr}");
-
-        Err(anyhow!("cmd failed: {cmd:?}"))
-    }
+fn mock_data<R: MockData>(input: &str, output: &str) -> Result<()>
+where
+    <R as MockData>::Error: std::error::Error + Send + Sync + 'static,
+{
+    let mock = R::load(input)?;
+    let log = mock.to_bytes()?;
+    Ok(std::fs::write(output, &log).with_context(|| {
+        format!("write mock measurement log to file: {}", output)
+    })?)
 }
 
+/// Execute one of the `attest-mock` commands to generate attestation
+/// artifacts used in testing.
 fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
     {
@@ -45,8 +40,10 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "unittest")]
     {
+        use attest_mock::{MockCorim, MockLog};
+
         // output directory where we put data generated test inputs
-        let out = Utf8PathBuf::from(
+        let outdir = Utf8PathBuf::from(
             std::env::var("OUT_DIR")
                 .context("Get OUT_DIR from the environment")?,
         );
@@ -57,26 +54,27 @@ fn main() -> Result<()> {
                 anyhow!("Loading config from \"{}\" failed: {e:?}", config_path)
             })?;
 
-        doc.write_key_pairs(out.clone(), OutputFileExistsBehavior::Skip)
+        doc.write_key_pairs(outdir.clone(), OutputFileExistsBehavior::Skip)
             .map_err(|e| anyhow!("writing key pairs failed: {e:?}"))?;
-        doc.write_certificates(out.clone(), OutputFileExistsBehavior::Skip)
+        doc.write_certificates(outdir.clone(), OutputFileExistsBehavior::Skip)
             .map_err(|e| anyhow!("writing certificates failed: {e:?}"))?;
-        doc.write_certificate_lists(out, OutputFileExistsBehavior::Skip)
-            .map_err(|e| anyhow!("writing cert chains failed: {e:?}"))?;
+        doc.write_certificate_lists(
+            outdir.clone(),
+            OutputFileExistsBehavior::Skip,
+        )
+        .map_err(|e| anyhow!("writing cert chains failed: {e:?}"))?;
 
-        let start_dir = std::env::current_dir().context("get current dir")?;
-        std::env::set_current_dir("test-keys/")
-            .context("chdir to test keys")?;
+        // generate the mock measurement log used by `cargo test`
+        let out = outdir.join("log.bin");
+        mock_data::<MockLog>("test-keys/log.kdl", out.as_ref())?;
 
-        // generate measurement log used by `cargo test`
-        attest_gen_cmd("log", "log.kdl", "log.bin")?;
+        // generate the mock corpus of reference measurements for the RoT
+        let out = outdir.join("corim-rot.cbor");
+        mock_data::<MockCorim>("test-keys/corim-rot.kdl", out.as_ref())?;
 
-        // generate the corpus of reference measurements used by `cargo test`
-        attest_gen_cmd("corim", "corim-rot.kdl", "corim-rot.cbor")?;
-        attest_gen_cmd("corim", "corim-sp.kdl", "corim-sp.cbor")?;
-
-        std::env::set_current_dir(start_dir)
-            .context("restore current dir to original")?;
+        // generate the mock corpus of reference measurements for the SP
+        let out = outdir.join("corim-sp.cbor");
+        mock_data::<MockCorim>("test-keys/corim-sp.kdl", out.as_ref())?;
     }
 
     Ok(())

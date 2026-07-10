@@ -43,12 +43,6 @@ jobs:
         run: cargo --version
       - name: Report rustc version
         run: rustc --version
-      - name: Install attest-mock
-        run: |
-          cargo install --locked \
-            --git https://github.com/oxidecomputer/dice-util \
-            --rev 4b408edc1d00f108ddf635415d783e6f12fe9641 \
-            attest-mock
       - name: Build
         run: cargo build --all-targets --verbose
       - name: Run tests
