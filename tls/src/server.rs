@@ -4,12 +4,13 @@
 
 //! A TLS based server
 
+use crate::config::{load_roots, new_tls_server_config};
 use crate::keys::{
     get_attest_data, AttestConfig, CertResolver, MeasurementConnectionPolicy,
-    ResolveSetting, RotCertVerifier, SprocketsConfig,
+    RotCertVerifier, SprocketsConfig,
 };
 use crate::{
-    certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
+    certs_from_der, certs_to_der, platform_id_from_tls_certs, recv_msg,
     send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
     PREVIOUS_PROTOCOL_VERSION,
 };
@@ -25,7 +26,6 @@ use rustls::{
         danger::{ClientCertVerified, ClientCertVerifier},
         ResolvesServerCert,
     },
-    version::TLS13,
     CipherSuite, ServerConfig, SignatureScheme,
 };
 use slog::{error, info, warn};
@@ -33,10 +33,7 @@ use std::net::{SocketAddr, SocketAddrV6};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
-use x509_cert::{
-    der::{Decode, DecodePem},
-    Certificate,
-};
+use x509_cert::Certificate;
 
 impl ResolvesServerCert for CertResolver {
     fn resolve(
@@ -122,19 +119,8 @@ impl SprocketsAcceptor {
 
         // get PlatformId from server TLS / Trust Quorum cert chain
         let (_, conn) = stream.get_ref();
-        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
-            let mut pki_path = Vec::new();
-            for der in tls_certs.iter() {
-                pki_path.push(Certificate::from_der(der).map_err(|_| {
-                    rustls::Error::InvalidCertificate(
-                        rustls::CertificateError::BadEncoding,
-                    )
-                })?)
-            }
-            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
-        } else {
-            return Err(Error::NoTQCerts);
-        };
+        let tq_platform_id =
+            platform_id_from_tls_certs(conn.peer_certificates())?;
 
         // get version from the client
         let version_bytes = recv_msg(&mut stream).await?;
@@ -373,89 +359,24 @@ impl Server {
         self.tcp_listener.local_addr()
     }
 
-    fn new_tls_local_server_config(
-        priv_key: Utf8PathBuf,
-        cert_chain: Utf8PathBuf,
-        roots: Vec<Utf8PathBuf>,
-        log: slog::Logger,
-    ) -> Result<ServerConfig, Error> {
-        let roots = roots
-            .into_iter()
-            .map(|x| load_root_cert(&x))
-            .collect::<Result<Vec<Certificate>, _>>()?;
-
-        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
-            as Arc<dyn ClientCertVerifier>;
-
-        let server_resolver = Arc::new(CertResolver::new(
-            log.clone(),
-            ResolveSetting::Local {
-                priv_key,
-                cert_chain,
-            },
-        )) as Arc<dyn ResolvesServerCert>;
-
-        let config =
-            ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
-                .with_protocol_versions(&[&TLS13])?
-                .with_client_cert_verifier(verifier)
-                .with_cert_resolver(server_resolver);
-
-        Ok(config)
-    }
-
-    fn new_tls_ipcc_server_config(
-        roots: Vec<Utf8PathBuf>,
-        log: slog::Logger,
-    ) -> Result<ServerConfig, Error> {
-        let roots = roots
-            .into_iter()
-            .map(|x| load_root_cert(&x))
-            .collect::<Result<Vec<Certificate>, _>>()?;
-
-        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
-            as Arc<dyn ClientCertVerifier>;
-
-        let server_resolver =
-            Arc::new(CertResolver::new(log.clone(), ResolveSetting::Ipcc))
-                as Arc<dyn ResolvesServerCert>;
-
-        let config =
-            ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
-                .with_protocol_versions(&[&TLS13])?
-                .with_client_cert_verifier(verifier)
-                .with_cert_resolver(server_resolver);
-
-        Ok(config)
-    }
-
     pub async fn new(
         config: SprocketsConfig,
         addr: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Server, Error> {
-        let mut roots = Vec::new();
-        for root in &config.roots {
-            let root = std::fs::read(root)?;
-            let root = Certificate::from_pem(&root)?;
-            roots.push(root);
-        }
+        let roots = load_roots(&config.roots)?;
+        let tls_config =
+            new_tls_server_config(config.resolve, roots.clone(), &log)?;
 
-        let c = match config.resolve {
-            ResolveSetting::Local {
-                priv_key,
-                cert_chain,
-            } => Server::new_tls_local_server_config(
-                priv_key,
-                cert_chain,
-                config.roots,
-                log.clone(),
-            )?,
-            ResolveSetting::Ipcc => {
-                Server::new_tls_ipcc_server_config(config.roots, log.clone())?
-            }
-        };
-        Server::listen(c, config.attest, roots, addr, log, config.enforce).await
+        Server::listen(
+            tls_config,
+            config.attest,
+            roots,
+            addr,
+            log,
+            config.enforce,
+        )
+        .await
     }
 
     async fn listen(

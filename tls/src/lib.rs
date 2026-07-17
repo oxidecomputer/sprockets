@@ -24,11 +24,12 @@ use std::{fs, io};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_rustls::TlsStream;
 use x509_cert::{
-    der::{self, DecodePem, Encode, Reader, SliceReader},
+    der::{self, Decode, DecodePem, Encode, Reader, SliceReader},
     Certificate,
 };
 
 pub mod client;
+mod config;
 pub mod ipcc;
 pub mod keys;
 pub mod server;
@@ -252,6 +253,38 @@ pub fn load_root_cert(path: &Utf8PathBuf) -> Result<Certificate, Error> {
     Ok(cert)
 }
 
+/// Derives the peer's [`PlatformId`] from the trust quorum certificate chain
+/// presented during the TLS handshake.
+///
+/// `tls_certs` is the peer's chain as rustls reports it, end entity first. The
+/// resulting identity is the one an attestation exchange must agree with: the
+/// caller is expected to compare it against the `PlatformId` of the peer's
+/// attestation cert chain and reject the connection on a mismatch.
+///
+/// # Errors
+///
+/// Returns [`Error::NoTQCerts`] if `tls_certs` is `None`, which is how both an
+/// unauthenticated peer and a rustls handle that has not finished its handshake
+/// present themselves.
+pub(crate) fn platform_id_from_tls_certs(
+    tls_certs: Option<&[rustls::pki_types::CertificateDer<'_>]>,
+) -> Result<PlatformId, Error> {
+    let Some(tls_certs) = tls_certs else {
+        return Err(Error::NoTQCerts);
+    };
+
+    let mut pki_path = Vec::new();
+    for der in tls_certs.iter() {
+        pki_path.push(Certificate::from_der(der).map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?)
+    }
+
+    Ok(PlatformId::try_from(&pki_path)?)
+}
+
 fn certs_to_der(certs: &[Certificate]) -> Result<Vec<u8>, Error> {
     let mut der = Vec::new();
 
@@ -337,7 +370,7 @@ async fn send_msg<T: AsyncWriteExt + Unpin>(
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
 ///
-/// Use `ring` as a crypto provider. `aws_lc` doesn't compile on illumos.
+/// Uses `aws-lc-rs` as the crypto provider.
 ///
 /// Only allow X25519 for key exchange
 ///
@@ -597,11 +630,17 @@ mod tests {
             };
         });
 
-        let client_config = client::Client::new_tls_local_client_config(
-            mock_datadir.join("test-sprockets-auth-2.key.pem"),
-            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
-            vec![mock_datadir.join("test-root-a.cert.pem")],
-            log,
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
         )
         .unwrap();
 
@@ -672,11 +711,17 @@ mod tests {
             }
         });
 
-        let client_config = client::Client::new_tls_local_client_config(
-            mock_datadir.join("test-sprockets-auth-2.key.pem"),
-            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
-            vec![mock_datadir.join("test-root-a.cert.pem")],
-            log,
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
         )
         .unwrap();
 
@@ -834,11 +879,17 @@ mod tests {
             }
         });
 
-        let client_config = client::Client::new_tls_local_client_config(
-            mock_datadir.join("test-sprockets-auth-2.key.pem"),
-            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
-            vec![mock_datadir.join("test-root-a.cert.pem")],
-            log,
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
         )
         .unwrap();
 
