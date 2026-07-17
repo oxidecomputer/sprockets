@@ -373,17 +373,8 @@ impl Endpoint {
     ) -> Result<AttestedConnection, Error> {
         let connection = self.inner.connect(addr.into(), SERVER_NAME)?.await?;
 
-        // The peer identity is the server's TLS/trust-quorum chain, the QUIC
-        // analog of `peer_certificates()` on the TCP path.
-        let tq_platform_id =
-            platform_id_from_peer_identity(connection.peer_identity())?;
-
-        let (send, recv) = connection.open_bi().await?;
-        let mut stream = BiStream::new(send, recv);
-
-        let (peer_platform_id, appraisal) = match attest::client_exchange(
-            &mut stream,
-            tq_platform_id,
+        match client_handshake(
+            &connection,
             &self.attest_config,
             &self.roots,
             corpus,
@@ -392,19 +383,19 @@ impl Endpoint {
         )
         .await
         {
-            Ok(result) => result,
+            Ok((stream, peer_platform_id, appraisal)) => {
+                Ok(AttestedConnection::new(
+                    connection,
+                    stream,
+                    peer_platform_id,
+                    appraisal,
+                ))
+            }
             Err(err) => {
                 close_for_error(&connection, &err);
-                return Err(err);
+                Err(err)
             }
-        };
-
-        Ok(AttestedConnection::new(
-            connection,
-            stream,
-            peer_platform_id,
-            appraisal,
-        ))
+        }
     }
 
     /// Awaits the next inbound connection, returning an [`Acceptor`] whose
@@ -504,15 +495,8 @@ impl Acceptor {
 
         let connection = incoming.await?;
 
-        let tq_platform_id =
-            platform_id_from_peer_identity(connection.peer_identity())?;
-
-        let (send, recv) = connection.accept_bi().await?;
-        let mut stream = BiStream::new(send, recv);
-
-        let (peer_platform_id, appraisal) = match attest::server_exchange(
-            &mut stream,
-            tq_platform_id,
+        match server_handshake(
+            &connection,
             corims,
             &attest_config,
             &roots,
@@ -521,23 +505,90 @@ impl Acceptor {
         )
         .await
         {
-            Ok(result) => result,
+            Ok((stream, peer_platform_id, appraisal)) => Ok((
+                AttestedConnection::new(
+                    connection,
+                    stream,
+                    peer_platform_id,
+                    appraisal,
+                ),
+                addr,
+            )),
             Err(err) => {
                 close_for_error(&connection, &err);
-                return Err(err);
+                Err(err)
             }
-        };
-
-        Ok((
-            AttestedConnection::new(
-                connection,
-                stream,
-                peer_platform_id,
-                appraisal,
-            ),
-            addr,
-        ))
+        }
     }
+}
+
+/// The client side of the post-establishment handshake: derives the peer
+/// identity, opens the primary stream, and runs the attestation exchange.
+///
+/// Split out from [`Endpoint::connect`] so that *any* failure after the
+/// connection is established — not only an exchange failure — closes the
+/// connection with the close code mapped from the error.
+async fn client_handshake(
+    connection: &quinn::Connection,
+    attest_config: &AttestConfig,
+    roots: &[Certificate],
+    corpus: Vec<Utf8PathBuf>,
+    enforce: MeasurementConnectionPolicy,
+    log: &slog::Logger,
+) -> Result<(BiStream, PlatformId, bool), Error> {
+    // The peer identity is the server's TLS/trust-quorum chain, the QUIC
+    // analog of `peer_certificates()` on the TCP path.
+    let tq_platform_id =
+        platform_id_from_peer_identity(connection.peer_identity())?;
+
+    let (send, recv) = connection.open_bi().await?;
+    let mut stream = BiStream::new(send, recv);
+
+    let (peer_platform_id, appraisal) = attest::client_exchange(
+        &mut stream,
+        tq_platform_id,
+        attest_config,
+        roots,
+        corpus,
+        enforce,
+        log,
+    )
+    .await?;
+
+    Ok((stream, peer_platform_id, appraisal))
+}
+
+/// The server side of the post-establishment handshake: derives the peer
+/// identity, accepts the primary stream, and runs the attestation exchange.
+///
+/// Split out from [`Acceptor::handshake`] for the same reason as
+/// [`client_handshake`].
+async fn server_handshake(
+    connection: &quinn::Connection,
+    corims: Vec<Corim>,
+    attest_config: &AttestConfig,
+    roots: &[Certificate],
+    enforce: MeasurementConnectionPolicy,
+    log: &slog::Logger,
+) -> Result<(BiStream, PlatformId, bool), Error> {
+    let tq_platform_id =
+        platform_id_from_peer_identity(connection.peer_identity())?;
+
+    let (send, recv) = connection.accept_bi().await?;
+    let mut stream = BiStream::new(send, recv);
+
+    let (peer_platform_id, appraisal) = attest::server_exchange(
+        &mut stream,
+        tq_platform_id,
+        corims,
+        attest_config,
+        roots,
+        enforce,
+        log,
+    )
+    .await?;
+
+    Ok((stream, peer_platform_id, appraisal))
 }
 
 /// A one-shot QUIC client, mirroring the TCP [`Client`](crate::Client).
