@@ -3,6 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! TLS based connections
+//!
+//! The default transport is TCP ([`Client`] / [`Server`]). With the `quic`
+//! cargo feature enabled, the `quic` module provides the same
+//! mutually-authenticated, attested channel over QUIC.
 
 use camino::Utf8PathBuf;
 use dice_mfg_msgs::PlatformId;
