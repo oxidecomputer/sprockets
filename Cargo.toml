@@ -30,6 +30,7 @@ ed25519-dalek = { version = "2.1", default-features = false, features = ["digest
 libipcc = { git = "https://github.com/oxidecomputer/ipcc-rs", rev = "524eb8f125003dff50b9703900c6b323f00f9e1b" }
 pem-rfc7468 = { version = "0.7.0"}
 pki-playground = { git = "https://github.com/oxidecomputer/pki-playground", rev = "7600756029ce046a02c6234aa84ce230cc5eaa04" }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
 rustls = { version = "0.23.10", default-features = false, features = ["std", "aws_lc_rs", "logging"] }
 secrecy = "0.8.0"
 serde = { version = "1", default-features = false }

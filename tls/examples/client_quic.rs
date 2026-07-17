@@ -2,17 +2,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Example IPCC server that echos back whatever was sent
+//! Example QUIC client that echoes out whatever it gets back.
+//!
+//! The QUIC analog of the `client` example: identical CLI, but the transport
+//! is a sprockets QUIC connection rather than TCP.
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
 use sprockets_tls::keys::{
     AttestConfig, MeasurementConnectionPolicy, ResolveSetting, SprocketsConfig,
 };
-use sprockets_tls::Server;
+use sprockets_tls::quic::Client;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
+use tokio::io::{stdin as tokio_stdin, stdout as tokio_stdout};
 
 #[derive(Debug, Parser)]
 enum Setting {
@@ -42,7 +46,7 @@ struct Args {
     /// attestation appraisal process
     #[clap(long)]
     corpus: Vec<Utf8PathBuf>,
-    /// Address and port to bind
+    /// Address and port to connect to
     #[clap(long)]
     addr: String,
     #[clap(long)]
@@ -60,10 +64,8 @@ async fn main() {
     let args = Args::parse();
 
     if args.roots.is_empty() {
-        panic!("Must specify at least one root");
+        panic!("Need at least one root");
     }
-
-    let listen_addr = SocketAddrV6::from_str(&args.addr).unwrap();
 
     let (attest, resolve) = match args.config {
         Setting::Ipcc => (AttestConfig::Ipcc, ResolveSetting::Ipcc),
@@ -87,7 +89,7 @@ async fn main() {
         ),
     };
 
-    let server_config = SprocketsConfig {
+    let client_config = SprocketsConfig {
         attest,
         roots: args.roots,
         resolve,
@@ -98,23 +100,28 @@ async fn main() {
         },
     };
 
-    let server = Server::new(server_config, listen_addr, log.clone())
+    let addr = SocketAddrV6::from_str(&args.addr).unwrap();
+
+    let conn = Client::connect(client_config, addr, args.corpus, log.clone())
         .await
         .unwrap();
+    let platform_id = conn.peer_platform_id().as_str();
+    info!(log, "connected to attested peer: {platform_id}");
 
-    loop {
-        let (stream, _) = server
-            .accept(args.corpus.clone())
-            .await
-            .unwrap()
-            .handshake()
-            .await
-            .unwrap();
-        let platform_id = stream.peer_platform_id().as_str();
-        info!(log, "connected to attested peer: {platform_id}");
-        let (mut reader, mut writer) = split(stream);
-        let n = copy(&mut reader, &mut writer).await.unwrap();
-        writer.flush().await.unwrap();
-        info!(log, "Echo: {}", n);
-    }
+    let mut stdin = tokio_stdin();
+    let (mut reader, mut writer) = split(conn);
+
+    // Unlike the TCP client example's select!, the echo is drained to EOF
+    // after stdin ends: exiting as soon as stdin closes would drop the
+    // connection (close code 0) and could truncate the in-flight echo — see
+    // the drop semantics in the `quic` module docs. Reading the server's
+    // stream FIN is the application-level delivery acknowledgment.
+    let stdout_task = tokio::spawn(async move {
+        let mut stdout = tokio_stdout();
+        let _ = copy(&mut reader, &mut stdout).await;
+    });
+
+    copy(&mut stdin, &mut writer).await.unwrap();
+    writer.shutdown().await.unwrap();
+    stdout_task.await.unwrap();
 }
