@@ -106,6 +106,11 @@ async fn main() {
     // runtime.
     let server = Server::new(server_config, listen_addr, log.clone()).unwrap();
 
+    // Announce the actual bound address on stdout (the logs go to stderr):
+    // with port 0 this is how a caller — interactive or the example-pair
+    // integration test — learns the OS-assigned port.
+    println!("listening on {}", server.listen_addr().unwrap());
+
     loop {
         let (conn, _) = server
             .accept(args.corpus.clone())
