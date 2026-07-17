@@ -46,3 +46,11 @@ quic = ["dep:quinn"]
 
 [dev-dependencies]
 sprockets-tls = { path = ".", features = ["unittest"] }
+
+[[example]]
+name = "client_quic"
+required-features = ["quic"]
+
+[[example]]
+name = "server_quic"
+required-features = ["quic"]
