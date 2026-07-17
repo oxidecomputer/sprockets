@@ -606,6 +606,76 @@ mod tests {
         handle.await.unwrap();
     }
 
+    // A version message whose body is shorter than the 4-byte version, sent
+    // by a TLS-authenticated client, is rejected as Error::ProtocolVersion —
+    // the server task must error, not panic on a short slice.
+    #[tokio::test]
+    async fn short_version_message_rejected() {
+        let log = logger();
+        let mock_datadir = mock_datadir();
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46467").unwrap();
+
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforced);
+        let corpus = vec![
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
+        ];
+
+        let log2 = log.clone();
+        let handle = tokio::spawn(async move {
+            let server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            let result = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await;
+            match result {
+                Err(Error::ProtocolVersion) => {}
+                Err(other) => {
+                    panic!("expected ProtocolVersion, got {other:?}")
+                }
+                Ok(_) => {
+                    panic!("a malformed version message must not complete")
+                }
+            }
+        });
+
+        let client_config = client::Client::new_tls_local_client_config(
+            mock_datadir.join("test-sprockets-auth-2.key.pem"),
+            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
+            vec![mock_datadir.join("test-root-a.cert.pem")],
+            log,
+        )
+        .unwrap();
+
+        let dnsname =
+            rustls::pki_types::ServerName::try_from("unknown.com").unwrap();
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+            client_config,
+        ));
+        let stream = loop {
+            if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+                break s;
+            };
+            sleep(Duration::from_millis(1)).await;
+        };
+        let mut stream = connector.connect(dnsname, stream).await.unwrap();
+
+        // A valid length prefix (2) followed by a 2-byte body: the server's
+        // recv_msg succeeds, but the body is shorter than the 4-byte version
+        // it must contain.
+        stream.write_all(&2u32.to_le_bytes()).await.unwrap();
+        stream.write_all(b"xy").await.unwrap();
+        stream.shutdown().await.unwrap();
+
+        handle.await.unwrap();
+    }
+
     #[tokio::test]
     async fn spawn_accept() {
         let log = logger();

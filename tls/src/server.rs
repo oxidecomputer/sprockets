@@ -138,8 +138,14 @@ impl SprocketsAcceptor {
 
         // get version from the client
         let version_bytes = recv_msg(&mut stream).await?;
-        let version =
-            u32::from_le_bytes(version_bytes[..4].try_into().unwrap());
+        // Anything but exactly the 4-byte little-endian version is protocol
+        // garbage from the peer; reject it rather than index past the end of a
+        // short message.
+        let version_bytes: [u8; 4] = version_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::ProtocolVersion)?;
+        let version = u32::from_le_bytes(version_bytes);
 
         if version == CURRENT_PROTOCOL_VERSION {
             // we're good to go
