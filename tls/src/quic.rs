@@ -108,6 +108,9 @@ use x509_cert::Certificate;
 
 mod stream;
 
+#[cfg(test)]
+mod tests;
+
 pub use stream::{AttestedConnection, BiStream};
 
 /// Re-export of the exact `quinn` this crate is built against, so consumers can

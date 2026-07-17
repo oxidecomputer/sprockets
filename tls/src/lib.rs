@@ -344,7 +344,7 @@ mod tests {
         Utf8PathBuf::from(env!("OUT_DIR"))
     }
 
-    fn local_config(
+    pub fn local_config(
         n: usize,
         enforce: MeasurementConnectionPolicy,
     ) -> keys::SprocketsConfig {
