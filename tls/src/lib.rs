@@ -32,6 +32,8 @@ pub mod client;
 mod config;
 pub mod ipcc;
 pub mod keys;
+#[cfg(feature = "quic")]
+pub mod quic;
 pub mod server;
 
 pub use client::Client;
@@ -134,6 +136,24 @@ pub enum Error {
 
     #[error("Client gave up negotating the version")]
     ClientGaveUp,
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC connect error")]
+    QuicConnect(#[from] quinn::ConnectError),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC connection error")]
+    QuicConnection(#[from] quinn::ConnectionError),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC TLS config has no RFC 9001 Initial cipher suite")]
+    QuicNoInitialCipherSuite(
+        #[from] quinn::crypto::rustls::NoInitialCipherSuite,
+    ),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC endpoint is closed")]
+    QuicEndpointClosed,
 }
 
 /// A type representing an established sprockets connection.
