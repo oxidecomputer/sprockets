@@ -59,7 +59,7 @@ async fn main() {
 
     let args = Args::parse();
 
-    if args.roots.len() < 1 {
+    if args.roots.is_empty() {
         panic!("Must specify at least one root");
     }
 
