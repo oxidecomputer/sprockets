@@ -66,7 +66,7 @@
 //!
 //! | Code | Meaning |
 //! |------|---------|
-//! | [`PROTOCOL`](close_code::PROTOCOL) | Version negotiation failed |
+//! | [`PROTOCOL`](close_code::PROTOCOL) | Version negotiation failed or unparseable protocol bytes |
 //! | [`ATTESTATION`](close_code::ATTESTATION) | Peer attestation did not verify |
 //! | [`APPRAISAL`](close_code::APPRAISAL) | Measurements failed appraisal under `Enforced` |
 //! | [`PLATFORM_ID_MISMATCH`](close_code::PLATFORM_ID_MISMATCH) | TLS and attestation chains disagreed on PlatformId |
@@ -161,7 +161,8 @@ const INCOMING_BUFFER_SIZE_TOTAL: u64 = 10 << 20; // 10 MiB
 pub mod close_code {
     use quinn::VarInt;
 
-    /// Protocol-version negotiation failed.
+    /// Version negotiation failed, or the peer sent bytes that do not parse
+    /// as the sprockets protocol.
     pub const PROTOCOL: VarInt = VarInt::from_u32(1);
     /// The peer's attestation did not verify.
     pub const ATTESTATION: VarInt = VarInt::from_u32(2);
@@ -263,14 +264,36 @@ fn platform_id_from_peer_identity(
     platform_id_from_tls_certs(certs.as_deref())
 }
 
-/// Maps a handshake error to the QUIC close code the peer will observe.
-fn close_code_for_error(err: &Error) -> VarInt {
+/// Maps a handshake error to the QUIC close code the peer will observe, and a
+/// short static reason naming the failure class.
+///
+/// The reason deliberately names only the class, never the error's rendered
+/// message: error strings can carry local detail (file paths, configuration
+/// specifics) that the peer has no need for.
+fn close_code_for_error(err: &Error) -> (VarInt, &'static str) {
     match err {
+        // Hubpack failures during the exchange are decode failures on
+        // peer-sent bytes (the encode direction into MAX_SIZE-d buffers
+        // cannot fail), and an oversized length prefix is likewise
+        // peer-sent, so they classify as protocol garbage, not as a local
+        // error.
         Error::ProtocolVersion
         | Error::ClientMismatch
-        | Error::ClientGaveUp => close_code::PROTOCOL,
-        Error::PlatformIdMismatch => close_code::PLATFORM_ID_MISMATCH,
-        Error::AttestMeasurementsVerifier { .. } => close_code::APPRAISAL,
+        | Error::ClientGaveUp
+        | Error::Hubpack(_)
+        | Error::MessageTooLarge { .. } => {
+            (close_code::PROTOCOL, "protocol error")
+        }
+        Error::PlatformIdMismatch => {
+            (close_code::PLATFORM_ID_MISMATCH, "platform id mismatch")
+        }
+        Error::AttestMeasurementsVerifier { .. } => {
+            (close_code::APPRAISAL, "measurement appraisal failed")
+        }
+        // DER failures during the exchange are parse failures on the
+        // peer-sent attestation cert chain (our own chain re-encodes
+        // infallibly, having already been parsed), so they belong with the
+        // attestation failures.
         Error::AttestationVerifier(_)
         | Error::AttestCertVerifier(_)
         | Error::MeasurementSet(_)
@@ -284,14 +307,16 @@ fn close_code_for_error(err: &Error) -> VarInt {
         | Error::AttestMock(_)
         | Error::AttestIpcc(_)
         | Error::RotRequest(_)
-        | Error::NoTQCerts => close_code::ATTESTATION,
-        _ => close_code::LOCAL_ERROR,
+        | Error::Der(_)
+        | Error::NoTQCerts => (close_code::ATTESTATION, "attestation failed"),
+        _ => (close_code::LOCAL_ERROR, "local error"),
     }
 }
 
 /// Closes `connection` with the code and reason derived from `err`.
 fn close_for_error(connection: &quinn::Connection, err: &Error) {
-    connection.close(close_code_for_error(err), err.to_string().as_bytes());
+    let (code, reason) = close_code_for_error(err);
+    connection.close(code, reason.as_bytes());
 }
 
 /// A sprockets QUIC endpoint: one UDP socket that both dials and listens.
