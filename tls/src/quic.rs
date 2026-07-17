@@ -348,6 +348,28 @@ impl Endpoint {
         bind: SocketAddrV6,
         log: slog::Logger,
     ) -> Result<Self, Error> {
+        Endpoint::new_inner(config, bind, log, true)
+    }
+
+    /// Binds a dial-only endpoint at `bind`: no server configuration is
+    /// installed, so the socket never answers inbound connection attempts.
+    ///
+    /// Used by the one-shot [`Client`] facade; [`accept`](Endpoint::accept)
+    /// on such an endpoint never yields a connection.
+    fn new_dial_only(
+        config: SprocketsConfig,
+        bind: SocketAddrV6,
+        log: slog::Logger,
+    ) -> Result<Self, Error> {
+        Endpoint::new_inner(config, bind, log, false)
+    }
+
+    fn new_inner(
+        config: SprocketsConfig,
+        bind: SocketAddrV6,
+        log: slog::Logger,
+        listen: bool,
+    ) -> Result<Self, Error> {
         let roots = config::load_roots(&config.roots)?;
         let transport = Arc::new(transport_config());
         let client_config = new_quic_client_config(
@@ -356,14 +378,18 @@ impl Endpoint {
             &log,
             transport.clone(),
         )?;
-        let server_config = new_quic_server_config(
-            config.resolve.clone(),
-            roots.clone(),
-            &log,
-            transport,
-        )?;
 
-        let mut inner = quinn::Endpoint::server(server_config, bind.into())?;
+        let mut inner = if listen {
+            let server_config = new_quic_server_config(
+                config.resolve,
+                roots.clone(),
+                &log,
+                transport,
+            )?;
+            quinn::Endpoint::server(server_config, bind.into())?
+        } else {
+            quinn::Endpoint::client(bind.into())?
+        };
         inner.set_default_client_config(client_config);
 
         Ok(Endpoint {
@@ -621,6 +647,8 @@ async fn server_handshake(
 /// For callers that only dial and do not need to hold an [`Endpoint`]. Each
 /// [`connect`](Client::connect) binds a fresh UDP socket on an OS-assigned port
 /// (`[::]:0`), performs the attested handshake, and returns the connection. The
+/// socket is dial-only: it carries no server configuration and never answers
+/// inbound connection attempts. The
 /// endpoint handle is then dropped, but quinn keeps its I/O driver alive as long
 /// as the returned connection lives, so the connection stays usable. Callers
 /// that dial repeatedly, or that also listen, should share one [`Endpoint`]
@@ -640,7 +668,7 @@ impl Client {
         log: slog::Logger,
     ) -> Result<AttestedConnection, Error> {
         let bind = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
-        let endpoint = Endpoint::new(config, bind, log)?;
+        let endpoint = Endpoint::new_dial_only(config, bind, log)?;
         endpoint.connect(addr, corpus).await
     }
 }
