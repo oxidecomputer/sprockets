@@ -6,7 +6,6 @@
 
 use camino::Utf8PathBuf;
 use dice_mfg_msgs::PlatformId;
-use hubpack::SerializedSize;
 use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
 use rustls::crypto::aws_lc_rs::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
@@ -21,13 +20,14 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::{fs, io};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsStream;
 use x509_cert::{
-    der::{self, Decode, DecodePem, Encode, Reader, SliceReader},
+    der::{self, Decode, DecodePem},
     Certificate,
 };
 
+mod attest;
 pub mod client;
 mod config;
 pub mod ipcc;
@@ -283,89 +283,6 @@ pub(crate) fn platform_id_from_tls_certs(
     }
 
     Ok(PlatformId::try_from(&pki_path)?)
-}
-
-fn certs_to_der(certs: &[Certificate]) -> Result<Vec<u8>, Error> {
-    let mut der = Vec::new();
-
-    for cert in certs {
-        der.append(&mut cert.to_der()?);
-    }
-
-    Ok(der)
-}
-
-fn certs_from_der(buf: &[u8]) -> Result<Vec<Certificate>, Error> {
-    let mut certs = Vec::new();
-    let mut reader = SliceReader::new(buf)?;
-
-    while !reader.is_finished() {
-        certs.push(reader.decode()?);
-    }
-
-    Ok(certs)
-}
-
-// Response from the server, either the same version back, version - 1
-// or an error if there is no way the server can support this request
-type ProtocolResult = Result<u32, ()>;
-
-// Message from client acking the version or telling the server it's
-// giving up
-type ProtocolRequestAck = Result<u32, ()>;
-
-const CURRENT_PROTOCOL_VERSION: u32 = 2;
-const PREVIOUS_PROTOCOL_VERSION: u32 = CURRENT_PROTOCOL_VERSION - 1;
-
-/// The largest message [`recv_msg`] will accept.
-///
-/// The length prefix is peer-controlled and [`recv_msg`] allocates the full
-/// message buffer before reading the body, so without a bound a
-/// TLS-authenticated (but not yet attested) peer can demand a 4 GiB
-/// allocation with a 4-byte prefix. 1 MiB comfortably exceeds every
-/// legitimate protocol message: the largest are the hubpacked measurement
-/// log and attestation, whose bounds are asserted below; cert chains and
-/// nonces are far smaller.
-const MAX_MSG_SIZE: usize = 1024 * 1024;
-
-// The bound must admit every legitimate protocol message.
-const _: () = assert!(dice_verifier::Log::MAX_SIZE <= MAX_MSG_SIZE);
-const _: () = assert!(dice_verifier::Attestation::MAX_SIZE <= MAX_MSG_SIZE);
-
-async fn recv_msg<T: AsyncReadExt + Unpin>(
-    stream: &mut T,
-) -> Result<Vec<u8>, Error> {
-    // to receive a message we first get its length that is a u32 serialized as
-    // a little endian byte array
-    let mut msg_len = [0u8; 4];
-    stream.read_exact(&mut msg_len).await?;
-    let msg_len: usize = u32::from_le_bytes(msg_len).try_into()?;
-
-    // The length is peer-controlled: bound it before allocating.
-    if msg_len > MAX_MSG_SIZE {
-        return Err(Error::MessageTooLarge {
-            len: msg_len,
-            max: MAX_MSG_SIZE,
-        });
-    }
-
-    // with the length we can then get the message body
-    let mut buf = vec![0u8; msg_len];
-    stream.read_exact(&mut buf).await?;
-
-    Ok(buf)
-}
-
-async fn send_msg<T: AsyncWriteExt + Unpin>(
-    stream: &mut T,
-    msg: &[u8],
-) -> Result<(), Error> {
-    // to send a message we first send the receiver its length as a u32
-    // serialized as a little endian byte array
-    let len: u32 = msg.len().try_into()?;
-    stream.write_all(&len.to_le_bytes()).await?;
-    // then we send the message
-    Ok(stream.write_all(msg).await?)
 }
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
