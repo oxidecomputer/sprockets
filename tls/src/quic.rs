@@ -101,7 +101,7 @@ use quinn::{IdleTimeout, TransportConfig, VarInt};
 use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
 use std::any::Any;
 use std::io;
-use std::net::{SocketAddr, SocketAddrV6};
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::Arc;
 use std::time::Duration;
 use x509_cert::Certificate;
@@ -534,5 +534,83 @@ impl Acceptor {
             ),
             addr,
         ))
+    }
+}
+
+/// A one-shot QUIC client, mirroring the TCP [`Client`](crate::Client).
+///
+/// For callers that only dial and do not need to hold an [`Endpoint`]. Each
+/// [`connect`](Client::connect) binds a fresh UDP socket on an OS-assigned port
+/// (`[::]:0`), performs the attested handshake, and returns the connection. The
+/// endpoint handle is then dropped, but quinn keeps its I/O driver alive as long
+/// as the returned connection lives, so the connection stays usable. Callers
+/// that dial repeatedly, or that also listen, should share one [`Endpoint`]
+/// instead.
+pub struct Client {}
+
+impl Client {
+    /// Binds an ephemeral endpoint, connects to `addr`, and runs the attested
+    /// handshake, returning the connection.
+    ///
+    /// Behaves like [`Client::connect`](crate::Client::connect) on the TCP path.
+    /// Not cancel safe: run in a dedicated task.
+    pub async fn connect(
+        config: SprocketsConfig,
+        addr: SocketAddrV6,
+        corpus: Vec<Utf8PathBuf>,
+        log: slog::Logger,
+    ) -> Result<AttestedConnection, Error> {
+        let bind = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
+        let endpoint = Endpoint::new(config, bind, log)?;
+        endpoint.connect(addr, corpus).await
+    }
+}
+
+/// A QUIC server, mirroring the TCP [`Server`](crate::Server).
+///
+/// A thin wrapper over a listening [`Endpoint`] for callers that only accept
+/// connections. Callers that also dial can use the underlying [`Endpoint`]
+/// directly.
+pub struct Server {
+    endpoint: Endpoint,
+}
+
+impl Server {
+    /// Binds a UDP socket at `addr` and prepares it to accept sprockets QUIC
+    /// connections.
+    ///
+    /// Behaves like [`Server::new`](crate::Server::new) on the TCP path.
+    pub fn new(
+        config: SprocketsConfig,
+        addr: SocketAddrV6,
+        log: slog::Logger,
+    ) -> Result<Server, Error> {
+        Ok(Server {
+            endpoint: Endpoint::new(config, addr, log)?,
+        })
+    }
+
+    /// Returns the local address the server is bound to.
+    ///
+    /// As with the TCP [`Server::listen_addr`](crate::Server::listen_addr),
+    /// binding port 0 lets the OS assign a port; this reports the real one.
+    pub fn listen_addr(&self) -> io::Result<SocketAddr> {
+        self.endpoint.local_addr()
+    }
+
+    /// Awaits the next inbound connection, returning an [`Acceptor`].
+    ///
+    /// Behaves like [`Server::accept`](crate::Server::accept) on the TCP path.
+    pub async fn accept(
+        &self,
+        corpus: Vec<Utf8PathBuf>,
+    ) -> Result<Acceptor, Error> {
+        self.endpoint.accept(corpus).await
+    }
+
+    /// Returns the underlying endpoint, for callers that also need to dial or
+    /// to close the endpoint explicitly.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
     }
 }
