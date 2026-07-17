@@ -6,6 +6,7 @@
 
 use camino::Utf8PathBuf;
 use dice_mfg_msgs::PlatformId;
+use hubpack::SerializedSize;
 use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
 use rustls::crypto::aws_lc_rs::kx_group::X25519;
 use rustls::crypto::CryptoProvider;
@@ -103,6 +104,9 @@ pub enum Error {
 
     #[error("Hubpack error:")]
     Hubpack(#[from] hubpack::Error),
+
+    #[error("protocol message length {len} exceeds maximum {max}")]
+    MessageTooLarge { len: usize, max: usize },
 
     #[error("Failed to verify attestation")]
     AttestationVerifier(#[from] dice_verifier::VerifyAttestationError),
@@ -280,6 +284,21 @@ type ProtocolRequestAck = Result<u32, ()>;
 const CURRENT_PROTOCOL_VERSION: u32 = 2;
 const PREVIOUS_PROTOCOL_VERSION: u32 = CURRENT_PROTOCOL_VERSION - 1;
 
+/// The largest message [`recv_msg`] will accept.
+///
+/// The length prefix is peer-controlled and [`recv_msg`] allocates the full
+/// message buffer before reading the body, so without a bound a
+/// TLS-authenticated (but not yet attested) peer can demand a 4 GiB
+/// allocation with a 4-byte prefix. 1 MiB comfortably exceeds every
+/// legitimate protocol message: the largest are the hubpacked measurement
+/// log and attestation, whose bounds are asserted below; cert chains and
+/// nonces are far smaller.
+const MAX_MSG_SIZE: usize = 1024 * 1024;
+
+// The bound must admit every legitimate protocol message.
+const _: () = assert!(dice_verifier::Log::MAX_SIZE <= MAX_MSG_SIZE);
+const _: () = assert!(dice_verifier::Attestation::MAX_SIZE <= MAX_MSG_SIZE);
+
 async fn recv_msg<T: AsyncReadExt + Unpin>(
     stream: &mut T,
 ) -> Result<Vec<u8>, Error> {
@@ -287,7 +306,15 @@ async fn recv_msg<T: AsyncReadExt + Unpin>(
     // a little endian byte array
     let mut msg_len = [0u8; 4];
     stream.read_exact(&mut msg_len).await?;
-    let msg_len = u32::from_le_bytes(msg_len).try_into()?;
+    let msg_len: usize = u32::from_le_bytes(msg_len).try_into()?;
+
+    // The length is peer-controlled: bound it before allocating.
+    if msg_len > MAX_MSG_SIZE {
+        return Err(Error::MessageTooLarge {
+            len: msg_len,
+            max: MAX_MSG_SIZE,
+        });
+    }
 
     // with the length we can then get the message body
     let mut buf = vec![0u8; msg_len];
@@ -765,5 +792,74 @@ mod tests {
         {
             sleep(Duration::from_millis(1)).await;
         }
+    }
+
+    // A message whose length prefix exceeds MAX_MSG_SIZE, sent by a
+    // TLS-authenticated client, is rejected as Error::MessageTooLarge before
+    // the message buffer is allocated — the peer-controlled prefix must not
+    // be able to demand a 4 GiB allocation.
+    #[tokio::test]
+    async fn oversized_message_rejected() {
+        let log = logger();
+        let mock_datadir = mock_datadir();
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46468").unwrap();
+
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforced);
+        let corpus = vec![
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
+        ];
+
+        let log2 = log.clone();
+        let handle = tokio::spawn(async move {
+            let server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            let result = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await;
+            match result {
+                Err(Error::MessageTooLarge { .. }) => {}
+                Err(other) => {
+                    panic!("expected MessageTooLarge, got {other:?}")
+                }
+                Ok(_) => {
+                    panic!("an oversized message must not complete")
+                }
+            }
+        });
+
+        let client_config = client::Client::new_tls_local_client_config(
+            mock_datadir.join("test-sprockets-auth-2.key.pem"),
+            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
+            vec![mock_datadir.join("test-root-a.cert.pem")],
+            log,
+        )
+        .unwrap();
+
+        let dnsname =
+            rustls::pki_types::ServerName::try_from("unknown.com").unwrap();
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+            client_config,
+        ));
+        let stream = loop {
+            if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+                break s;
+            };
+            sleep(Duration::from_millis(1)).await;
+        };
+        let mut stream = connector.connect(dnsname, stream).await.unwrap();
+
+        // A length prefix claiming a 4 GiB message; no body ever follows. The
+        // server must reject on the prefix alone.
+        stream.write_all(&u32::MAX.to_le_bytes()).await.unwrap();
+        stream.shutdown().await.unwrap();
+
+        handle.await.unwrap();
     }
 }
