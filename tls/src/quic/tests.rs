@@ -324,6 +324,113 @@ async fn unattested_client() {
     drop(endpoint);
 }
 
+/// A version message whose body is shorter than the 4-byte version is
+/// rejected as [`Error::ProtocolVersion`] — the server task must error, not
+/// panic on a short slice.
+#[tokio::test]
+async fn short_version_message_rejected() {
+    let log = logger();
+    let dir = mock_datadir();
+
+    let server =
+        Server::new(local_config(1, Enforced), localhost(), log.clone())
+            .unwrap();
+    let addr = as_v6(server.listen_addr().unwrap());
+
+    let server_corpus = corpus(&dir);
+    let server_task = tokio::spawn(async move {
+        let result = server
+            .accept(server_corpus)
+            .await
+            .unwrap()
+            .handshake()
+            .await;
+        match result {
+            Err(Error::ProtocolVersion) => {}
+            Err(other) => panic!("expected ProtocolVersion, got {other:?}"),
+            Ok(_) => {
+                panic!("a malformed version message must not complete")
+            }
+        }
+    });
+
+    let endpoint = raw_client_endpoint(local_config(2, Enforced), &log);
+    let conn = endpoint
+        .connect(addr.into(), SERVER_NAME)
+        .unwrap()
+        .await
+        .unwrap();
+    let (mut send, _recv) = conn.open_bi().await.unwrap();
+    // A valid length prefix (2) followed by a 2-byte body: the server's
+    // recv_msg succeeds, but the body is shorter than the 4-byte version it
+    // must contain.
+    send.write_all(&2u32.to_le_bytes()).await.unwrap();
+    send.write_all(b"xy").await.unwrap();
+    let _ = send.finish();
+
+    server_task.await.unwrap();
+    drop(conn);
+    drop(endpoint);
+}
+
+/// A message whose length prefix exceeds `MAX_MSG_SIZE` is rejected as
+/// [`Error::MessageTooLarge`] before the message buffer is allocated, and
+/// the client observes the [`close_code::PROTOCOL`] close code.
+#[tokio::test]
+async fn oversized_message_rejected() {
+    let log = logger();
+    let dir = mock_datadir();
+
+    let server =
+        Server::new(local_config(1, Enforced), localhost(), log.clone())
+            .unwrap();
+    let addr = as_v6(server.listen_addr().unwrap());
+
+    let server_corpus = corpus(&dir);
+    let server_task = tokio::spawn(async move {
+        let result = server
+            .accept(server_corpus)
+            .await
+            .unwrap()
+            .handshake()
+            .await;
+        match result {
+            Err(Error::MessageTooLarge { .. }) => {}
+            Err(other) => panic!("expected MessageTooLarge, got {other:?}"),
+            Ok(_) => panic!("an oversized message must not complete"),
+        }
+    });
+
+    let endpoint = raw_client_endpoint(local_config(2, Enforced), &log);
+    let conn = endpoint
+        .connect(addr.into(), SERVER_NAME)
+        .unwrap()
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    // A length prefix claiming a 4 GiB message; no body ever follows. The
+    // server must reject on the prefix alone.
+    send.write_all(&u32::MAX.to_le_bytes()).await.unwrap();
+
+    // The server closes with PROTOCOL; observe it from the read half.
+    let read_err = recv
+        .read_to_end(usize::MAX)
+        .await
+        .expect_err("server must close the connection");
+    match read_err {
+        quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+            quinn::ConnectionError::ApplicationClosed(close),
+        )) => {
+            assert_eq!(close.error_code, close_code::PROTOCOL);
+        }
+        other => panic!("expected an application close, got {other:?}"),
+    }
+
+    server_task.await.unwrap();
+    drop(conn);
+    drop(endpoint);
+}
+
 /// One server endpoint handshakes with several concurrent clients.
 #[tokio::test]
 async fn spawn_accept() {
