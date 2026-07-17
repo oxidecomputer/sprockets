@@ -472,7 +472,9 @@ impl Endpoint {
 
             // Require address validation. An unvalidated peer is sent a Retry;
             // it re-dials, and that attempt arrives already validated. This
-            // bounds the pre-authentication amplification surface.
+            // bounds the pre-authentication amplification surface. retry()
+            // errors only for an already-validated incoming, which the guard
+            // above excludes.
             if !incoming.remote_address_validated() {
                 let _ = incoming.retry();
                 continue;

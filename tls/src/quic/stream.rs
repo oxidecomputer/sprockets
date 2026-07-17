@@ -27,7 +27,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 /// [`AsyncWrite::poll_shutdown`] maps to [`quinn::SendStream::finish`], which
 /// queues a FIN but does not wait for the peer to acknowledge delivery; see the
 /// [module documentation](crate::quic#liveness-and-shutdown) for what that
-/// implies about in-flight data.
+/// implies about in-flight data. Unlike shutting down a TCP-backed
+/// [`Stream`](crate::Stream), a *second* `shutdown().await` returns an error:
+/// `finish` rejects a stream that is already finished.
 pub struct BiStream {
     send: quinn::SendStream,
     recv: quinn::RecvStream,
