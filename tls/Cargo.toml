@@ -14,6 +14,7 @@ libipcc.workspace = true
 ed25519-dalek.workspace = true
 hubpack = "0.1.2"
 pem-rfc7468 = { workspace = true, features = ["std"] }
+quinn = { workspace = true, optional = true }
 rustls.workspace = true
 serde.workspace = true
 secrecy.workspace = true
@@ -38,6 +39,10 @@ pki-playground = { workspace = true, optional = true }
 
 [features]
 unittest = ["attest-mock", "camino", "pki-playground"]
+# QUIC transport. Additive and off by default: gates the `quic` module and its
+# optional quinn dependency, leaving the TCP API and the no-feature build
+# untouched.
+quic = ["dep:quinn"]
 
 [dev-dependencies]
 sprockets-tls = { path = ".", features = ["unittest"] }
