@@ -129,7 +129,7 @@ dependencies = [
 [[package]]
 name = "attest-data"
 version = "0.5.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=861fe4098abc8d0bba2d26a4da7bec68e21f5ba5#861fe4098abc8d0bba2d26a4da7bec68e21f5ba5"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4a39ef08d81e5177edee0bddb1146032aa21074d#4a39ef08d81e5177edee0bddb1146032aa21074d"
 dependencies = [
  "const-oid",
  "der",
@@ -148,7 +148,7 @@ dependencies = [
 [[package]]
 name = "attest-mock"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=861fe4098abc8d0bba2d26a4da7bec68e21f5ba5#861fe4098abc8d0bba2d26a4da7bec68e21f5ba5"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4a39ef08d81e5177edee0bddb1146032aa21074d#4a39ef08d81e5177edee0bddb1146032aa21074d"
 dependencies = [
  "anyhow",
  "attest-data",
@@ -572,7 +572,7 @@ dependencies = [
 [[package]]
 name = "dice-mfg-msgs"
 version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=861fe4098abc8d0bba2d26a4da7bec68e21f5ba5#861fe4098abc8d0bba2d26a4da7bec68e21f5ba5"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4a39ef08d81e5177edee0bddb1146032aa21074d#4a39ef08d81e5177edee0bddb1146032aa21074d"
 dependencies = [
  "const-oid",
  "corncobs",
@@ -588,7 +588,7 @@ dependencies = [
 [[package]]
 name = "dice-util-barcode"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=861fe4098abc8d0bba2d26a4da7bec68e21f5ba5#861fe4098abc8d0bba2d26a4da7bec68e21f5ba5"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4a39ef08d81e5177edee0bddb1146032aa21074d#4a39ef08d81e5177edee0bddb1146032aa21074d"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -596,7 +596,7 @@ dependencies = [
 [[package]]
 name = "dice-verifier"
 version = "0.3.0-pre0"
-source = "git+https://github.com/oxidecomputer/dice-util?rev=861fe4098abc8d0bba2d26a4da7bec68e21f5ba5#861fe4098abc8d0bba2d26a4da7bec68e21f5ba5"
+source = "git+https://github.com/oxidecomputer/dice-util?rev=4a39ef08d81e5177edee0bddb1146032aa21074d#4a39ef08d81e5177edee0bddb1146032aa21074d"
 dependencies = [
  "anyhow",
  "async-trait",
