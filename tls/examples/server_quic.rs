@@ -2,14 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Example IPCC server that echos back whatever was sent
+//! Example QUIC server that echoes back whatever was sent.
+//!
+//! The QUIC analog of the `server` example: identical CLI, but the transport
+//! is a sprockets QUIC endpoint rather than a TCP listener.
 use camino::Utf8PathBuf;
 use clap::Parser;
 use slog::{info, Drain};
 use sprockets_tls::keys::{
     AttestConfig, MeasurementConnectionPolicy, ResolveSetting, SprocketsConfig,
 };
-use sprockets_tls::Server;
+use sprockets_tls::quic::Server;
 use std::net::SocketAddrV6;
 use std::str::FromStr;
 use tokio::io::{copy, split, AsyncWriteExt};
@@ -98,23 +101,47 @@ async fn main() {
         },
     };
 
-    let server = Server::new(server_config, listen_addr, log.clone())
-        .await
-        .unwrap();
+    // Unlike the TCP `Server::new`, the QUIC constructor is synchronous; it
+    // binds the UDP socket and spawns quinn's endpoint driver on the current
+    // runtime.
+    let server = Server::new(server_config, listen_addr, log.clone()).unwrap();
+
+    // Announce the actual bound address on stdout (the logs go to stderr):
+    // with port 0 this is how a caller — interactive or the example-pair
+    // integration test — learns the OS-assigned port.
+    println!("listening on {}", server.listen_addr().unwrap());
 
     loop {
-        let (stream, _) = server
+        let (conn, _) = server
             .accept(args.corpus.clone())
             .await
             .unwrap()
             .handshake()
             .await
             .unwrap();
-        let platform_id = stream.peer_platform_id().as_str();
+        let platform_id = conn.peer_platform_id().as_str();
         info!(log, "connected to attested peer: {platform_id}");
-        let (mut reader, mut writer) = split(stream);
-        let n = copy(&mut reader, &mut writer).await.unwrap();
-        writer.flush().await.unwrap();
-        info!(log, "Echo: {}", n);
+
+        // A handle on the quinn connection, kept to await the client's
+        // departure below after `split` consumes the sprockets connection.
+        let quinn_conn = conn.connection().clone();
+        let (mut reader, mut writer) = split(conn);
+
+        // A client that departs by closing the connection (rather than
+        // finishing its stream) surfaces here as an error: that ends this
+        // connection, not the server.
+        match copy(&mut reader, &mut writer).await {
+            Ok(n) => {
+                // Finish the echo stream so the client reads EOF after the
+                // last echoed byte, then hold the connection open until the
+                // client has read everything and closed: dropping our handle
+                // first could discard the in-flight echo tail (see the drop
+                // semantics in the `quic` module docs).
+                let _ = writer.shutdown().await;
+                quinn_conn.closed().await;
+                info!(log, "Echo: {}", n);
+            }
+            Err(e) => info!(log, "connection ended: {e}"),
+        }
     }
 }

@@ -24,9 +24,9 @@ where
 {
     let mock = R::load(input)?;
     let log = mock.to_bytes()?;
-    Ok(std::fs::write(output, &log).with_context(|| {
-        format!("write mock measurement log to file: {}", output)
-    })?)
+    std::fs::write(output, &log).with_context(|| {
+        format!("write mock measurement log to file: {output}")
+    })
 }
 
 /// Execute one of the `attest-mock` commands to generate attestation
@@ -34,8 +34,8 @@ where
 fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
     {
-        println!("cargo:rustc-link-arg=-Wl,-R{}", OXIDE_PLATFORM);
-        println!("cargo:rustc-link-search={}", OXIDE_PLATFORM);
+        println!("cargo:rustc-link-arg=-Wl,-R{OXIDE_PLATFORM}");
+        println!("cargo:rustc-link-search={OXIDE_PLATFORM}");
     }
 
     #[cfg(feature = "unittest")]
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
         let config_path = "test-keys/config.kdl";
         let doc =
             config::load_and_validate(config_path.as_ref()).map_err(|e| {
-                anyhow!("Loading config from \"{}\" failed: {e:?}", config_path)
+                anyhow!("Loading config from \"{config_path}\" failed: {e:?}")
             })?;
 
         doc.write_key_pairs(outdir.clone(), OutputFileExistsBehavior::Skip)

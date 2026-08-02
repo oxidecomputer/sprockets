@@ -10,22 +10,14 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use crate::keys::{get_attest_data, AttestConfig, ResolveSetting};
+use crate::attest;
+use crate::config::{load_roots, new_tls_client_config};
+use crate::keys::AttestConfig;
 use crate::keys::{
     CertResolver, MeasurementConnectionPolicy, RotCertVerifier, SprocketsConfig,
 };
-use crate::{
-    certs_from_der, certs_to_der, crypto_provider, load_root_cert, recv_msg,
-    send_msg, ProtocolRequestAck, ProtocolResult, CURRENT_PROTOCOL_VERSION,
-    PREVIOUS_PROTOCOL_VERSION,
-};
-use crate::{Error, Stream};
+use crate::{platform_id_from_tls_certs, Error, Stream};
 use camino::Utf8PathBuf;
-use dice_verifier::{
-    Attestation, Corim, Log, MeasurementSet, Nonce, Nonce32,
-    ReferenceMeasurements,
-};
-use hubpack::SerializedSize;
 use rustls::{
     client::{
         danger::{
@@ -34,11 +26,10 @@ use rustls::{
         ResolvesClientCert,
     },
     sign::CertifiedKey,
-    version::TLS13,
     ClientConfig, SignatureScheme,
 };
-use slog::{error, info, warn};
-use x509_cert::{der::Decode, Certificate};
+use slog::{error, info};
+use x509_cert::Certificate;
 
 impl ResolvesClientCert for CertResolver {
     fn resolve(
@@ -136,32 +127,12 @@ impl Client {
         corpus: Vec<Utf8PathBuf>,
         log: slog::Logger,
     ) -> Result<Stream<TcpStream>, Error> {
-        use x509_cert::der::DecodePem;
-
-        let mut roots = Vec::new();
-        for root in &config.roots {
-            let root = std::fs::read(root)?;
-            let root = Certificate::from_pem(&root)?;
-            roots.push(root);
-        }
-
-        let c = match config.resolve {
-            ResolveSetting::Local {
-                priv_key,
-                cert_chain,
-            } => Client::new_tls_local_client_config(
-                priv_key,
-                cert_chain,
-                config.roots,
-                log.clone(),
-            )?,
-            ResolveSetting::Ipcc => {
-                Client::new_tls_ipcc_client_config(config.roots, log.clone())?
-            }
-        };
+        let roots = load_roots(&config.roots)?;
+        let tls_config =
+            new_tls_client_config(config.resolve, roots.clone(), &log)?;
 
         Client::connect_with_config(
-            c,
+            tls_config,
             config.attest,
             roots,
             corpus,
@@ -170,65 +141,6 @@ impl Client {
             config.enforce,
         )
         .await
-    }
-
-    // For some testing shenanigans
-    pub(crate) fn new_tls_local_client_config(
-        priv_key: Utf8PathBuf,
-        cert_chain: Utf8PathBuf,
-        roots: Vec<Utf8PathBuf>,
-        log: slog::Logger,
-    ) -> Result<ClientConfig, Error> {
-        let roots = roots
-            .into_iter()
-            .map(|x| load_root_cert(&x))
-            .collect::<Result<Vec<Certificate>, _>>()?;
-
-        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
-            as Arc<dyn ServerCertVerifier>;
-
-        let client_resolver = Arc::new(CertResolver::new(
-            log.clone(),
-            ResolveSetting::Local {
-                priv_key,
-                cert_chain,
-            },
-        )) as Arc<dyn ResolvesClientCert>;
-
-        let config =
-            ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
-                .with_protocol_versions(&[&TLS13])?
-                .dangerous()
-                .with_custom_certificate_verifier(verifier)
-                .with_client_cert_resolver(client_resolver);
-
-        Ok(config)
-    }
-
-    fn new_tls_ipcc_client_config(
-        roots: Vec<Utf8PathBuf>,
-        log: slog::Logger,
-    ) -> Result<ClientConfig, Error> {
-        let roots = roots
-            .into_iter()
-            .map(|x| load_root_cert(&x))
-            .collect::<Result<Vec<Certificate>, _>>()?;
-
-        let verifier = Arc::new(RotCertVerifier::new(roots, log.clone())?)
-            as Arc<dyn ServerCertVerifier>;
-
-        let client_resolver =
-            Arc::new(CertResolver::new(log.clone(), ResolveSetting::Ipcc))
-                as Arc<dyn ResolvesClientCert>;
-
-        let config =
-            ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
-                .with_protocol_versions(&[&TLS13])?
-                .dangerous()
-                .with_custom_certificate_verifier(verifier)
-                .with_client_cert_resolver(client_resolver);
-
-        Ok(config)
     }
 
     /// Connect to a remote peer
@@ -262,174 +174,20 @@ impl Client {
 
         // get server cert chain from connection
         let (_, conn) = stream.get_ref();
-        let tq_platform_id = if let Some(tls_certs) = conn.peer_certificates() {
-            let mut pki_path = Vec::new();
-            for der in tls_certs.iter() {
-                pki_path.push(Certificate::from_der(der).map_err(|_| {
-                    rustls::Error::InvalidCertificate(
-                        rustls::CertificateError::BadEncoding,
-                    )
-                })?)
-            }
-            dice_mfg_msgs::PlatformId::try_from(&pki_path)?
-        } else {
-            return Err(Error::NoTQCerts);
-        };
+        let tq_platform_id =
+            platform_id_from_tls_certs(conn.peer_certificates())?;
 
-        // send version to the server
-        send_msg(&mut stream, &CURRENT_PROTOCOL_VERSION.to_le_bytes()).await?;
+        let (server_platform_id, result) = attest::client_exchange(
+            &mut stream,
+            tq_platform_id,
+            &attest_config,
+            &roots,
+            corpus,
+            enforce,
+            &log,
+        )
+        .await?;
 
-        // get version response from server, we expect it to be
-        // hubpacked
-        let version_response = recv_msg(&mut stream).await?;
-        let (version, _): (ProtocolResult, _) =
-            hubpack::deserialize(&version_response)?;
-
-        let version = match version {
-            Ok(v) => v,
-            // Not much we can do?
-            Err(_) => return Err(Error::ProtocolVersion),
-        };
-
-        if version == CURRENT_PROTOCOL_VERSION {
-            // we're good to go
-            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
-            let resp: ProtocolRequestAck = Ok(version);
-            let resp_len = hubpack::serialize(&mut buf, &resp)?;
-            send_msg(&mut stream, &buf[..resp_len]).await?;
-        } else if version == PREVIOUS_PROTOCOL_VERSION {
-            // Also good
-            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
-            let resp: ProtocolRequestAck = Ok(version);
-            let resp_len = hubpack::serialize(&mut buf, &resp)?;
-            send_msg(&mut stream, &buf[..resp_len]).await?;
-        } else {
-            // Farewell
-            let mut buf = vec![0u8; ProtocolRequestAck::MAX_SIZE];
-            let resp: ProtocolRequestAck = Err(());
-            let resp_len = hubpack::serialize(&mut buf, &resp)?;
-            send_msg(&mut stream, &buf[..resp_len]).await?;
-            return Err(Error::ProtocolVersion);
-        }
-
-        // Right now all protocols are the same
-        info!(log, "Running with protocol version {version}");
-
-        // send Nonce to server
-        let nonce = Nonce::from_platform_rng(Nonce32::LENGTH)?;
-        send_msg(&mut stream, nonce.as_ref()).await?;
-
-        // get Nonce from server
-        let server_nonce = recv_msg(&mut stream).await?;
-        let server_nonce = Nonce::try_from(server_nonce)?;
-
-        // get attestation & verify it before sending it
-        // The attesation protocol has an inherent race condition between
-        // getting the log and the attestation. We verify our own attestation
-        // before sending it to the challenger to fail as early as possible.
-        let attest_data =
-            get_attest_data(&attest_config, &server_nonce).await?;
-        dice_verifier::verify_attestation(
-            &attest_data.certs[0],
-            &attest_data.attestation,
-            &attest_data.log,
-            &server_nonce,
-        )?;
-
-        // send client attestation cert chain to server
-        let cert_chain_der = certs_to_der(&attest_data.certs)?;
-        send_msg(&mut stream, &cert_chain_der).await?;
-
-        // get & verify server attestation cert chain
-        let server_cert_chain = recv_msg(&mut stream).await?;
-        let server_cert_chain = certs_from_der(&server_cert_chain)?;
-        let root =
-            dice_verifier::verify_cert_chain(&server_cert_chain, Some(&roots))?;
-        let server_platform_id =
-            dice_mfg_msgs::PlatformId::try_from(&server_cert_chain)?;
-        info!(
-            log,
-            "Cert chain from peer \"{}\" verified against root \"{}\"",
-            server_platform_id.as_str(),
-            root.tbs_certificate.subject,
-        );
-
-        if tq_platform_id != server_platform_id {
-            return Err(Error::PlatformIdMismatch);
-        }
-        info!(log, "TQ & attestation cert chains agree on platform id");
-
-        // send measurement log to server
-        let mut buf = vec![0u8; Log::MAX_SIZE];
-        let log_len = hubpack::serialize(&mut buf, &attest_data.log)?;
-        send_msg(&mut stream, &buf[..log_len]).await?;
-
-        // get measurement log from server
-        let server_log = recv_msg(&mut stream).await?;
-        let (server_log, _): (Log, _) = hubpack::deserialize(&server_log)?;
-
-        // hubpack attestation and send to server
-        let mut buf = vec![0u8; Attestation::MAX_SIZE];
-        let len = hubpack::serialize(&mut buf, &attest_data.attestation)?;
-        send_msg(&mut stream, &buf[..len]).await?;
-
-        // get attestation from server
-        let server_attestation = recv_msg(&mut stream).await?;
-        let (server_attestation, _): (Attestation, _) =
-            hubpack::deserialize(&server_attestation)?;
-
-        // verify server attestation
-        dice_verifier::verify_attestation(
-            &server_cert_chain[0],
-            &server_attestation,
-            &server_log,
-            &nonce,
-        )?;
-        info!(log, "Peer attestation verified");
-
-        // load corims into a set of ReferenceMeasurements
-        let mut corims = Vec::new();
-        for c in corpus {
-            corims.push(Corim::from_file(c)?);
-        }
-
-        for c in attest_data.test_corpus {
-            corims.push(Corim::from_file(c)?);
-        }
-        let reference_measurements =
-            ReferenceMeasurements::try_from(corims.as_slice())?;
-
-        // appraise measurements from server attestation against reference
-        // measurements
-        let measurements =
-            MeasurementSet::from_artifacts(&server_cert_chain, &server_log)?;
-        let result = match dice_verifier::verify_measurements(
-            &measurements,
-            &reference_measurements,
-        ) {
-            Ok(()) => {
-                info!(log, "Peer measurements appraised successfully");
-                true
-            }
-            Err(err) => {
-                warn!(
-                    log,
-                    "Peer ({}) measurements appraisal failed {} corpus {}",
-                    server_platform_id.as_str(),
-                    err,
-                    reference_measurements
-                );
-                match enforce {
-                    MeasurementConnectionPolicy::Enforced => {
-                        return Err(Error::AttestMeasurementsVerifier {
-                            peer: server_platform_id,
-                            err,
-                        });
-                    }
-                    MeasurementConnectionPolicy::Permissive => false,
-                }
-            }
-        };
         Ok(Stream::new(stream.into(), server_platform_id, result))
     }
 }

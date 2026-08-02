@@ -3,6 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! TLS based connections
+//!
+//! The default transport is TCP ([`Client`] / [`Server`]). With the `quic`
+//! cargo feature enabled, the `quic` module provides the same
+//! mutually-authenticated, attested channel over QUIC.
 
 use camino::Utf8PathBuf;
 use dice_mfg_msgs::PlatformId;
@@ -20,16 +24,20 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::{fs, io};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsStream;
 use x509_cert::{
-    der::{self, DecodePem, Encode, Reader, SliceReader},
+    der::{self, Decode, DecodePem},
     Certificate,
 };
 
+mod attest;
 pub mod client;
+mod config;
 pub mod ipcc;
 pub mod keys;
+#[cfg(feature = "quic")]
+pub mod quic;
 pub mod server;
 
 pub use client::Client;
@@ -104,6 +112,9 @@ pub enum Error {
     #[error("Hubpack error:")]
     Hubpack(#[from] hubpack::Error),
 
+    #[error("protocol message length {len} exceeds maximum {max}")]
+    MessageTooLarge { len: usize, max: usize },
+
     #[error("Failed to verify attestation")]
     AttestationVerifier(#[from] dice_verifier::VerifyAttestationError),
 
@@ -129,6 +140,24 @@ pub enum Error {
 
     #[error("Client gave up negotating the version")]
     ClientGaveUp,
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC connect error")]
+    QuicConnect(#[from] quinn::ConnectError),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC connection error")]
+    QuicConnection(#[from] quinn::ConnectionError),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC TLS config has no RFC 9001 Initial cipher suite")]
+    QuicNoInitialCipherSuite(
+        #[from] quinn::crypto::rustls::NoInitialCipherSuite,
+    ),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC endpoint is closed")]
+    QuicEndpointClosed,
 }
 
 /// A type representing an established sprockets connection.
@@ -248,69 +277,41 @@ pub fn load_root_cert(path: &Utf8PathBuf) -> Result<Certificate, Error> {
     Ok(cert)
 }
 
-fn certs_to_der(certs: &[Certificate]) -> Result<Vec<u8>, Error> {
-    let mut der = Vec::new();
+/// Derives the peer's [`PlatformId`] from the trust quorum certificate chain
+/// presented during the TLS handshake.
+///
+/// `tls_certs` is the peer's chain as rustls reports it, end entity first. The
+/// resulting identity is the one an attestation exchange must agree with: the
+/// caller is expected to compare it against the `PlatformId` of the peer's
+/// attestation cert chain and reject the connection on a mismatch.
+///
+/// # Errors
+///
+/// Returns [`Error::NoTQCerts`] if `tls_certs` is `None`, which is how both an
+/// unauthenticated peer and a rustls handle that has not finished its handshake
+/// present themselves.
+pub(crate) fn platform_id_from_tls_certs(
+    tls_certs: Option<&[rustls::pki_types::CertificateDer<'_>]>,
+) -> Result<PlatformId, Error> {
+    let Some(tls_certs) = tls_certs else {
+        return Err(Error::NoTQCerts);
+    };
 
-    for cert in certs {
-        der.append(&mut cert.to_der()?);
+    let mut pki_path = Vec::new();
+    for der in tls_certs.iter() {
+        pki_path.push(Certificate::from_der(der).map_err(|_| {
+            rustls::Error::InvalidCertificate(
+                rustls::CertificateError::BadEncoding,
+            )
+        })?)
     }
 
-    Ok(der)
-}
-
-fn certs_from_der(buf: &[u8]) -> Result<Vec<Certificate>, Error> {
-    let mut certs = Vec::new();
-    let mut reader = SliceReader::new(buf)?;
-
-    while !reader.is_finished() {
-        certs.push(reader.decode()?);
-    }
-
-    Ok(certs)
-}
-
-// Response from the server, either the same version back, version - 1
-// or an error if there is no way the server can support this request
-type ProtocolResult = Result<u32, ()>;
-
-// Message from client acking the version or telling the server it's
-// giving up
-type ProtocolRequestAck = Result<u32, ()>;
-
-const CURRENT_PROTOCOL_VERSION: u32 = 2;
-const PREVIOUS_PROTOCOL_VERSION: u32 = CURRENT_PROTOCOL_VERSION - 1;
-
-async fn recv_msg<T: AsyncReadExt + Unpin>(
-    stream: &mut T,
-) -> Result<Vec<u8>, Error> {
-    // to receive a message we first get its length that is a u32 serialized as
-    // a little endian byte array
-    let mut msg_len = [0u8; 4];
-    stream.read_exact(&mut msg_len).await?;
-    let msg_len = u32::from_le_bytes(msg_len).try_into()?;
-
-    // with the length we can then get the message body
-    let mut buf = vec![0u8; msg_len];
-    stream.read_exact(&mut buf).await?;
-
-    Ok(buf)
-}
-
-async fn send_msg<T: AsyncWriteExt + Unpin>(
-    stream: &mut T,
-    msg: &[u8],
-) -> Result<(), Error> {
-    // to send a message we first send the receiver its length as a u32
-    // serialized as a little endian byte array
-    let len: u32 = msg.len().try_into()?;
-    stream.write_all(&len.to_le_bytes()).await?;
-    // then we send the message
-    Ok(stream.write_all(msg).await?)
+    Ok(PlatformId::try_from(&pki_path)?)
 }
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
 ///
-/// Use `ring` as a crypto provider. `aws_lc` doesn't compile on illumos.
+/// Uses `aws-lc-rs` as the crypto provider.
 ///
 /// Only allow X25519 for key exchange
 ///
@@ -347,7 +348,7 @@ mod tests {
         Utf8PathBuf::from(env!("OUT_DIR"))
     }
 
-    fn local_config(
+    pub fn local_config(
         n: usize,
         enforce: MeasurementConnectionPolicy,
     ) -> keys::SprocketsConfig {
@@ -570,11 +571,17 @@ mod tests {
             };
         });
 
-        let client_config = client::Client::new_tls_local_client_config(
-            mock_datadir.join("test-sprockets-auth-2.key.pem"),
-            mock_datadir.join("test-sprockets-auth-2.certlist.pem"),
-            vec![mock_datadir.join("test-root-a.cert.pem")],
-            log,
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
         )
         .unwrap();
 
@@ -602,6 +609,82 @@ mod tests {
         // Wait for the other side of the connection to receive and assert the
         // message
         let _ = done_rx.await;
+
+        handle.await.unwrap();
+    }
+
+    // A version message whose body is shorter than the 4-byte version, sent
+    // by a TLS-authenticated client, is rejected as Error::ProtocolVersion —
+    // the server task must error, not panic on a short slice.
+    #[tokio::test]
+    async fn short_version_message_rejected() {
+        let log = logger();
+        let mock_datadir = mock_datadir();
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46467").unwrap();
+
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforced);
+        let corpus = vec![
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
+        ];
+
+        let log2 = log.clone();
+        let handle = tokio::spawn(async move {
+            let server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            let result = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await;
+            match result {
+                Err(Error::ProtocolVersion) => {}
+                Err(other) => {
+                    panic!("expected ProtocolVersion, got {other:?}")
+                }
+                Ok(_) => {
+                    panic!("a malformed version message must not complete")
+                }
+            }
+        });
+
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
+        )
+        .unwrap();
+
+        let dnsname =
+            rustls::pki_types::ServerName::try_from("unknown.com").unwrap();
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+            client_config,
+        ));
+        let stream = loop {
+            if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+                break s;
+            };
+            sleep(Duration::from_millis(1)).await;
+        };
+        let mut stream = connector.connect(dnsname, stream).await.unwrap();
+
+        // A valid length prefix (2) followed by a 2-byte body: the server's
+        // recv_msg succeeds, but the body is shorter than the 4-byte version
+        // it must contain.
+        stream.write_all(&2u32.to_le_bytes()).await.unwrap();
+        stream.write_all(b"xy").await.unwrap();
+        stream.shutdown().await.unwrap();
 
         handle.await.unwrap();
     }
@@ -695,5 +778,80 @@ mod tests {
         {
             sleep(Duration::from_millis(1)).await;
         }
+    }
+
+    // A message whose length prefix exceeds MAX_MSG_SIZE, sent by a
+    // TLS-authenticated client, is rejected as Error::MessageTooLarge before
+    // the message buffer is allocated — the peer-controlled prefix must not
+    // be able to demand a 4 GiB allocation.
+    #[tokio::test]
+    async fn oversized_message_rejected() {
+        let log = logger();
+        let mock_datadir = mock_datadir();
+        let addr: SocketAddrV6 = SocketAddrV6::from_str("[::1]:46468").unwrap();
+
+        let server_config =
+            local_config(1, MeasurementConnectionPolicy::Enforced);
+        let corpus = vec![
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
+        ];
+
+        let log2 = log.clone();
+        let handle = tokio::spawn(async move {
+            let server = Server::new(server_config, addr, log2.clone())
+                .await
+                .unwrap();
+
+            let result = server
+                .accept(corpus.clone())
+                .await
+                .unwrap()
+                .handshake()
+                .await;
+            match result {
+                Err(Error::MessageTooLarge { .. }) => {}
+                Err(other) => {
+                    panic!("expected MessageTooLarge, got {other:?}")
+                }
+                Ok(_) => {
+                    panic!("an oversized message must not complete")
+                }
+            }
+        });
+
+        let roots =
+            config::load_roots(&[mock_datadir.join("test-root-a.cert.pem")])
+                .unwrap();
+        let client_config = config::new_tls_client_config(
+            keys::ResolveSetting::Local {
+                priv_key: mock_datadir.join("test-sprockets-auth-2.key.pem"),
+                cert_chain: mock_datadir
+                    .join("test-sprockets-auth-2.certlist.pem"),
+            },
+            roots,
+            &log,
+        )
+        .unwrap();
+
+        let dnsname =
+            rustls::pki_types::ServerName::try_from("unknown.com").unwrap();
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+            client_config,
+        ));
+        let stream = loop {
+            if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+                break s;
+            };
+            sleep(Duration::from_millis(1)).await;
+        };
+        let mut stream = connector.connect(dnsname, stream).await.unwrap();
+
+        // A length prefix claiming a 4 GiB message; no body ever follows. The
+        // server must reject on the prefix alone.
+        stream.write_all(&u32::MAX.to_le_bytes()).await.unwrap();
+        stream.shutdown().await.unwrap();
+
+        handle.await.unwrap();
     }
 }
