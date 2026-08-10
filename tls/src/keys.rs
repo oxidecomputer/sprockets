@@ -20,12 +20,15 @@ use slog::{error, info};
 use std::io::prelude::*;
 use std::iter;
 
+#[cfg(feature = "ipcc")]
 use crate::ipcc::Ipcc;
 use crate::Error;
 use serde::Deserialize;
 use std::{fs::File, sync::Arc};
+#[cfg(feature = "ipcc")]
+use x509_cert::der::{self, Reader};
 use x509_cert::{
-    der::{self, Decode, Encode, Reader},
+    der::{Decode, Encode},
     Certificate,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -34,6 +37,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 #[serde(tag = "which", rename_all = "snake_case")]
 pub enum ResolveSetting {
     // Use certificates gathered over IPCC
+    #[cfg(feature = "ipcc")]
     Ipcc,
     // Use specified chain/key
     Local {
@@ -53,6 +57,7 @@ impl CertResolver {
         CertResolver { log, resolve }
     }
 
+    #[cfg(feature = "ipcc")]
     fn load_ipcc_key(&self) -> Result<Arc<CertifiedKey>, crate::Error> {
         let ipcc = Ipcc::new().map_err(crate::Error::RotRequest)?;
         let cert_chain_bytes = ipcc.rot_get_tq_cert_chain()?;
@@ -117,6 +122,7 @@ impl CertResolver {
 
     pub fn load_certified_key(&self) -> Result<Arc<CertifiedKey>, Error> {
         match &self.resolve {
+            #[cfg(feature = "ipcc")]
             ResolveSetting::Ipcc => self.load_ipcc_key(),
             ResolveSetting::Local {
                 priv_key,
@@ -191,9 +197,11 @@ impl SigningKey for LocalEd25519SigningKey {
 }
 
 /// Represents the underlying key returned over IPCC
+#[cfg(feature = "ipcc")]
 #[derive(Debug)]
 pub struct IpccKey {}
 
+#[cfg(feature = "ipcc")]
 impl SigningKey for IpccKey {
     fn choose_scheme(
         &self,
@@ -210,9 +218,11 @@ impl SigningKey for IpccKey {
     }
 }
 
+#[cfg(feature = "ipcc")]
 #[derive(Debug)]
 pub struct IpccSigner {}
 
+#[cfg(feature = "ipcc")]
 impl Signer for IpccSigner {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
         // We require sha3_256
@@ -384,6 +394,7 @@ pub struct SprocketsConfig {
 /// Configuration for attestation interface / artifacts.
 pub enum AttestConfig {
     // Use `dice-verifier::AttestIpcc`.
+    #[cfg(feature = "ipcc")]
     Ipcc,
     // Use artifacts from local files with `dice_verifier::AttestMock`.
     Local {
@@ -414,11 +425,14 @@ pub async fn get_attest_data(
     config: &AttestConfig,
     nonce: &dice_verifier::Nonce,
 ) -> Result<AttestArtifacts, Error> {
-    use dice_verifier::{ipcc::AttestIpcc, Attest, AttestMock};
+    #[cfg(feature = "ipcc")]
+    use dice_verifier::ipcc::AttestIpcc;
+    use dice_verifier::{Attest, AttestMock};
 
     // create the `Attest` impl prescribed by the config
     let (attest, test_corpus): (Box<dyn Attest + Send>, Vec<Utf8PathBuf>) =
         match config {
+            #[cfg(feature = "ipcc")]
             AttestConfig::Ipcc => (Box::new(AttestIpcc {}), vec![]),
             AttestConfig::Local {
                 priv_key,

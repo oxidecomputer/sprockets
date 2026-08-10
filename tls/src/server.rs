@@ -398,6 +398,7 @@ impl Server {
         Ok(config)
     }
 
+    #[cfg(feature = "ipcc")]
     fn new_tls_ipcc_server_config(
         roots: Vec<Utf8PathBuf>,
         log: slog::Logger,
@@ -445,6 +446,7 @@ impl Server {
                 config.roots,
                 log.clone(),
             )?,
+            #[cfg(feature = "ipcc")]
             ResolveSetting::Ipcc => {
                 Server::new_tls_ipcc_server_config(config.roots, log.clone())?
             }

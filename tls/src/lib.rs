@@ -28,6 +28,7 @@ use x509_cert::{
 };
 
 pub mod client;
+#[cfg(feature = "ipcc")]
 pub mod ipcc;
 pub mod keys;
 pub mod server;
@@ -57,6 +58,7 @@ pub enum Error {
         err: io::Error,
     },
 
+    #[cfg(feature = "ipcc")]
     #[error("RotRequest")]
     RotRequest(#[from] ipcc::RotRequestError),
 
@@ -66,6 +68,7 @@ pub enum Error {
     #[error("Failed to create mock attester")]
     AttestMock(#[from] dice_verifier::mock::AttestMockError),
 
+    #[cfg(feature = "ipcc")]
     #[error("Failed to create IPCC attester")]
     AttestIpcc(#[from] dice_verifier::ipcc::IpccError),
 
@@ -380,13 +383,16 @@ mod tests {
 
     #[tokio::test]
     async fn toml_config() {
-        let ipcc = r#"
-        resolve = {which = "ipcc"}
-        roots = ["/path/to/root1", "/path/to/root2"]
-        attest = {which = "ipcc"}
-        "#;
+        #[cfg(feature = "ipcc")]
+        {
+            let ipcc = r#"
+            resolve = {which = "ipcc"}
+            roots = ["/path/to/root1", "/path/to/root2"]
+            attest = {which = "ipcc"}
+            "#;
 
-        let _: keys::SprocketsConfig = toml::from_str(ipcc).unwrap();
+            let _: keys::SprocketsConfig = toml::from_str(ipcc).unwrap();
+        }
 
         let local = r#"
         resolve = { which = "local", priv_key = "/path/to/tq-priv.pem", cert_chain = "/path/to/tq-chain.pem" }
