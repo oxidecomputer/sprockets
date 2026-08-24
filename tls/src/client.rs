@@ -155,6 +155,7 @@ impl Client {
                 config.roots,
                 log.clone(),
             )?,
+            #[cfg(feature = "ipcc")]
             ResolveSetting::Ipcc => {
                 Client::new_tls_ipcc_client_config(config.roots, log.clone())?
             }
@@ -205,6 +206,7 @@ impl Client {
         Ok(config)
     }
 
+    #[cfg(feature = "ipcc")]
     fn new_tls_ipcc_client_config(
         roots: Vec<Utf8PathBuf>,
         log: slog::Logger,
