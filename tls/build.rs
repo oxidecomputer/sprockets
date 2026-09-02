@@ -34,8 +34,8 @@ where
 fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
     {
-        println!("cargo:rustc-link-arg=-Wl,-R{}", OXIDE_PLATFORM);
-        println!("cargo:rustc-link-search={}", OXIDE_PLATFORM);
+        println!("cargo:rustc-link-arg=-Wl,-R{OXIDE_PLATFORM}");
+        println!("cargo:rustc-link-search={OXIDE_PLATFORM}");
     }
 
     #[cfg(feature = "unittest")]
