@@ -24,6 +24,7 @@ use std::iter;
 use crate::ipcc::Ipcc;
 use crate::Error;
 use serde::Deserialize;
+use serde::Serialize;
 use std::{fs::File, sync::Arc};
 #[cfg(feature = "ipcc")]
 use x509_cert::der::{self, Reader};
@@ -33,7 +34,7 @@ use x509_cert::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "which", rename_all = "snake_case")]
 pub enum ResolveSetting {
     // Use certificates gathered over IPCC
@@ -364,7 +365,7 @@ impl RotCertVerifier {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Copy)]
+#[derive(Debug, Clone, Deserialize, Serialize, Copy)]
 pub enum MeasurementConnectionPolicy {
     /// Do not allow connections without correct measurements
     Enforced,
@@ -379,7 +380,7 @@ impl MeasurementConnectionPolicy {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SprocketsConfig {
     pub resolve: ResolveSetting,
@@ -389,7 +390,7 @@ pub struct SprocketsConfig {
     pub enforce: MeasurementConnectionPolicy,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "which", rename_all = "snake_case")]
 /// Configuration for attestation interface / artifacts.
 pub enum AttestConfig {
