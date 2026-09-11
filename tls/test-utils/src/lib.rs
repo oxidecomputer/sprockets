@@ -374,6 +374,16 @@ fn test_sprockets_auth(n: usize) -> (KeyPair, Entity, Certificate) {
                         ],
                     },
                 ),
+                // The trust-quorum-dhe cert this one stands in for
+                // carries a DICE measurement extension.
+                X509Extensions::DiceTcbInfo(DiceTcbInfoExtension {
+                    critical: true,
+                    fwid_list: vec![Fwid {
+                        digest_algorithm: DigestAlgorithm::Sha3_256,
+                        digest: "72fa8f8ea84a42251031366002cbb36281d0131f78cd680436116a720cdd9de5"
+                            .to_string(),
+                    }],
+                }),
             ]),
         },
     )
