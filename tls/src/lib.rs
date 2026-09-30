@@ -308,7 +308,13 @@ async fn send_msg<T: AsyncWriteExt + Unpin>(
     let len: u32 = msg.len().try_into()?;
     stream.write_all(&len.to_le_bytes()).await?;
     // then we send the message
-    Ok(stream.write_all(msg).await?)
+    stream.write_all(msg).await?;
+    // finally, make sure all the bytes are actually written on the wire,
+    // because we may now be about to wait to receive a message that may only be
+    // sent in response to *our* message, so make sure that the message is sent
+    // before returning.
+    stream.flush().await?;
+    Ok(())
 }
 
 /// Return a common [`CryptoProvider`] for use by both client and server.
