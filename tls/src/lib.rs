@@ -331,6 +331,7 @@ mod tests {
     use crate::keys::MeasurementConnectionPolicy;
     use camino::Utf8PathBuf;
     use slog::Drain;
+    use std::future::Future;
     use std::net::SocketAddrV6;
     use std::str::FromStr;
     use std::sync::atomic::AtomicUsize;
@@ -700,6 +701,104 @@ mod tests {
             != max_connections
         {
             sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    // Stress the client/server handshake by running many connections
+    // concurrently. Every connection must complete the handshake; if either
+    // side leaves a protocol message buffered in the TLS stream without
+    // flushing it before waiting on the peer's reply, the handshake deadlocks
+    // and this test times out.
+    //
+    // The number of connections defaults to 500 and can be set with the
+    // `SPROCKETS_STRESS_CONNECTIONS` environment variable.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stress_handshake() {
+        let log = logger();
+        let mock_datadir = mock_datadir();
+        let corpus = vec![
+            mock_datadir.join("corim-rot.cbor"),
+            mock_datadir.join("corim-sp.cbor"),
+        ];
+
+        let connections: usize = match std::env::var(
+            "SPROCKETS_STRESS_CONNECTIONS",
+        ) {
+            Ok(n) => n.parse().expect(
+                "SPROCKETS_STRESS_CONNECTIONS must be a number of connections",
+            ),
+            Err(_) => 500,
+        };
+
+        let server = Server::new(
+            local_config(1, MeasurementConnectionPolicy::Enforced),
+            SocketAddrV6::from_str("[::1]:0").unwrap(),
+            log.clone(),
+        )
+        .await
+        .unwrap();
+        let addr = match server.listen_addr().unwrap() {
+            std::net::SocketAddr::V6(addr) => addr,
+            addr => panic!("expected an IPv6 listen address, got {addr}"),
+        };
+
+        let server_corpus = corpus.clone();
+        tokio::spawn(async move {
+            for _ in 0..connections {
+                let acceptor =
+                    server.accept(server_corpus.clone()).await.unwrap();
+                tokio::spawn(async move {
+                    acceptor.handshake().await.unwrap();
+                });
+            }
+        });
+
+        // Unlike the servers, which would normally be distinct machines, the
+        // client opens all of its connections from a single task.
+        let mut clients: Vec<_> = (0..connections)
+            .map(|_| {
+                Some(Box::pin(Client::connect(
+                    local_config(2, MeasurementConnectionPolicy::Enforced),
+                    addr,
+                    corpus.clone(),
+                    log.clone(),
+                )))
+            })
+            .collect();
+
+        // Driving this many connections from one task can be slow, so rather
+        // than bounding the total time, only fail if no connection makes it
+        // through the handshake for a while.
+        let mut remaining = connections;
+        while remaining > 0 {
+            let progress = tokio::time::timeout(
+                Duration::from_secs(10),
+                std::future::poll_fn(|cx| {
+                    let mut completed = 0;
+                    for client in clients.iter_mut() {
+                        if let Some(fut) = client {
+                            if let Poll::Ready(res) = fut.as_mut().poll(cx) {
+                                res.unwrap();
+                                *client = None;
+                                completed += 1;
+                            }
+                        }
+                    }
+                    if completed > 0 {
+                        Poll::Ready(completed)
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+            )
+            .await;
+            match progress {
+                Ok(completed) => remaining -= completed,
+                Err(_) => panic!(
+                    "handshake deadlocked: {remaining} of {connections} \
+                     connections made no progress for 10s"
+                ),
+            }
         }
     }
 }
