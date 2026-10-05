@@ -198,6 +198,14 @@ certificate "test-sprockets-auth-1" {
             tcg-dice-kp-attest-init
             tcg-dice-kp-eca
         }
+        dice-tcb-info critical=true {
+            fwid-list {
+                fwid {
+                    digest-algorithm "sha3-256"
+                    digest "72fa8f8ea84a42251031366002cbb36281d0131f78cd680436116a720cdd9de5"
+                }
+            }
+        }
     }
 }
 
@@ -373,6 +381,14 @@ certificate "test-sprockets-auth-2" {
             tcg-dice-kp-identity-init
             tcg-dice-kp-attest-init
             tcg-dice-kp-eca
+        }
+        dice-tcb-info critical=true {
+            fwid-list {
+                fwid {
+                    digest-algorithm "sha3-256"
+                    digest "72fa8f8ea84a42251031366002cbb36281d0131f78cd680436116a720cdd9de5"
+                }
+            }
         }
     }
 }
