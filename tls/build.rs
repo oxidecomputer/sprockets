@@ -49,20 +49,16 @@ fn main() -> Result<()> {
         );
 
         let config_path = "test-keys/config.kdl";
-        let doc =
-            config::load_and_validate(config_path.as_ref()).map_err(|e| {
-                anyhow!("Loading config from \"{}\" failed: {e:?}", config_path)
-            })?;
+        let doc = config::load_and_validate(config_path).map_err(|e| {
+            anyhow!("Loading config from \"{}\" failed: {e:?}", config_path)
+        })?;
 
-        doc.write_key_pairs(outdir.clone(), OutputFileExistsBehavior::Skip)
+        doc.write_key_pairs(&outdir, OutputFileExistsBehavior::Skip)
             .map_err(|e| anyhow!("writing key pairs failed: {e:?}"))?;
-        doc.write_certificates(outdir.clone(), OutputFileExistsBehavior::Skip)
+        doc.write_certificates(&outdir, OutputFileExistsBehavior::Skip)
             .map_err(|e| anyhow!("writing certificates failed: {e:?}"))?;
-        doc.write_certificate_lists(
-            outdir.clone(),
-            OutputFileExistsBehavior::Skip,
-        )
-        .map_err(|e| anyhow!("writing cert chains failed: {e:?}"))?;
+        doc.write_certificate_lists(&outdir, OutputFileExistsBehavior::Skip)
+            .map_err(|e| anyhow!("writing cert chains failed: {e:?}"))?;
 
         // generate the mock measurement log used by `cargo test`
         let out = outdir.join("log.bin");
